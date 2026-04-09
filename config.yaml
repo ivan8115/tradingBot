@@ -1,0 +1,100 @@
+system:
+  mode: paper          # paper | live | backtest
+  log_level: INFO
+  db_path: data/trading.db
+  timezone: America/New_York
+
+universe:
+  watchlist:
+    - AAPL
+    - TSLA
+    - SPY
+    - QQQ
+  backtest:
+    start_date: "2023-01-01"
+    end_date: "2024-01-01"
+    start_capital: 100000
+
+risk:
+  max_portfolio_risk_pct: 0.02       # Max 2% of portfolio per trade
+  max_drawdown_pct: 0.15             # Halt all trading at 15% drawdown
+  max_single_position_pct: 0.10      # Max 10% in any single symbol
+  max_delta_exposure: 500            # Net portfolio delta limit (options)
+  daily_loss_limit_pct: 0.03         # Stop trading after 3% daily loss
+  position_sizing_method: kelly      # kelly | fixed_fraction | percent_equity
+  kelly_fraction: 0.25               # Use 25% fractional Kelly
+
+strategies:
+  wheel:
+    enabled: true
+    symbols:
+      - AAPL
+      - TSLA
+    csp:
+      target_delta: -0.28
+      min_dte: 21
+      max_dte: 45
+      profit_target_pct: 0.50        # Close at 50% of max profit
+      stop_loss_multiplier: 2.0      # Stop at 2× premium received
+      min_premium: 1.00
+      min_iv_rank: 50
+    cc:
+      target_delta: 0.30
+      min_dte: 21
+      max_dte: 45
+      profit_target_pct: 0.50
+      roll_when_dte: 7
+
+  momentum:
+    enabled: true
+    symbols:
+      - SPY
+      - QQQ
+    rsi_period: 14
+    rsi_overbought: 70
+    rsi_oversold: 30
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    ema_short: 9
+    ema_long: 21
+
+  mean_reversion:
+    enabled: false
+    symbols:
+      - AAPL
+      - MSFT
+    bb_period: 20
+    bb_std: 2.0
+    rsi_period: 14
+
+  breakout:
+    enabled: false
+    symbols:
+      - SPY
+    lookback_period: 20
+    volume_confirmation_multiplier: 1.5
+
+indicators:
+  bar_window_size: 200              # Rolling bars kept in memory per symbol
+  vwap_reset: market_open
+
+execution:
+  default_order_type: limit
+  limit_price_offset_pct: 0.001    # Place limit 0.1% from mid price
+  order_timeout_seconds: 30
+
+scheduler:
+  pre_market_hour: 8
+  pre_market_minute: 0
+  options_check_interval_minutes: 15
+  pre_close_buffer_minutes: 15
+
+monitoring:
+  slack_alerts: false
+  email_alerts: false
+  alert_on:
+    - large_loss
+    - drawdown_breach
+    - fill
+    - daily_summary

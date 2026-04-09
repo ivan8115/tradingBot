@@ -1,0 +1,174 @@
+"""
+Risk Manager — validates every signal before it becomes an order.
+All signals must pass through here. If any check fails, the signal is rejected.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from decimal import Decimal
+
+from loguru import logger
+
+from core.config import settings
+from core.events import SignalEvent
+from portfolio.portfolio import Portfolio
+
+
+@dataclass
+class RiskCheck:
+    name: str
+    passed: bool
+    reason: str = ""
+
+
+@dataclass
+class ValidationResult:
+    approved: bool
+    checks: list[RiskCheck] = field(default_factory=list)
+
+    @property
+    def rejection_reason(self) -> str | None:
+        failed = [c for c in self.checks if not c.passed]
+        return "; ".join(c.reason for c in failed) if failed else None
+
+
+class RiskManager:
+    """
+    Gate between signal generation and order execution.
+    Performs portfolio-level risk checks on every signal.
+    """
+
+    def __init__(
+        self,
+        max_drawdown_pct: float | None = None,
+        max_single_position_pct: float | None = None,
+        daily_loss_limit_pct: float | None = None,
+        max_delta_exposure: int | None = None,
+    ) -> None:
+        cfg = settings.risk
+        self._max_drawdown = max_drawdown_pct or cfg.max_drawdown_pct
+        self._max_position_pct = max_single_position_pct or cfg.max_single_position_pct
+        self._daily_loss_pct = daily_loss_limit_pct or cfg.daily_loss_limit_pct
+        self._max_delta = max_delta_exposure or cfg.max_delta_exposure
+
+        self._daily_start_value: Decimal | None = None
+        self._net_portfolio_delta: float = 0.0
+
+    def validate_signal(
+        self,
+        signal: SignalEvent,
+        portfolio: Portfolio,
+        current_price: Decimal | None = None,
+    ) -> ValidationResult:
+        """
+        Run all risk checks. Returns ValidationResult with approved flag.
+        Logs rejections for audit trail.
+        """
+        checks: list[RiskCheck] = []
+
+        checks.append(self._check_drawdown(portfolio))
+        checks.append(self._check_daily_loss(portfolio))
+        checks.append(self._check_position_concentration(signal, portfolio, current_price))
+
+        # Only check delta for options signals
+        if signal.signal_type in ("SELL_PUT", "SELL_CALL", "BUY_TO_CLOSE_PUT", "BUY_TO_CLOSE_CALL"):
+            checks.append(self._check_delta_exposure(signal))
+
+        approved = all(c.passed for c in checks)
+
+        if not approved:
+            failed = [c for c in checks if not c.passed]
+            logger.warning(
+                f"[RiskManager] Signal REJECTED: {signal.strategy_id} "
+                f"{signal.signal_type} {signal.symbol} | "
+                f"Reasons: {'; '.join(c.reason for c in failed)}"
+            )
+        else:
+            logger.debug(
+                f"[RiskManager] Signal APPROVED: {signal.strategy_id} "
+                f"{signal.signal_type} {signal.symbol}"
+            )
+
+        return ValidationResult(approved=approved, checks=checks)
+
+    def set_daily_start_value(self, portfolio: Portfolio) -> None:
+        """Call at market open to record the starting value for daily loss tracking."""
+        self._daily_start_value = portfolio.total_value()
+
+    def update_delta_exposure(self, delta_change: float) -> None:
+        """Called by options positions to update net portfolio delta."""
+        self._net_portfolio_delta += delta_change
+
+    # ------------------------------------------------------------------
+    # Individual checks
+    # ------------------------------------------------------------------
+
+    def _check_drawdown(self, portfolio: Portfolio) -> RiskCheck:
+        dd = float(portfolio.drawdown())
+        if dd >= self._max_drawdown:
+            return RiskCheck(
+                name="max_drawdown",
+                passed=False,
+                reason=f"Max drawdown breached: {dd*100:.1f}% >= {self._max_drawdown*100:.1f}%",
+            )
+        return RiskCheck(name="max_drawdown", passed=True)
+
+    def _check_daily_loss(self, portfolio: Portfolio) -> RiskCheck:
+        if self._daily_start_value is None:
+            return RiskCheck(name="daily_loss", passed=True)
+
+        current = portfolio.total_value()
+        daily_loss = float((self._daily_start_value - current) / self._daily_start_value)
+
+        if daily_loss >= self._daily_loss_pct:
+            return RiskCheck(
+                name="daily_loss",
+                passed=False,
+                reason=f"Daily loss limit: {daily_loss*100:.1f}% >= {self._daily_loss_pct*100:.1f}%",
+            )
+        return RiskCheck(name="daily_loss", passed=True)
+
+    def _check_position_concentration(
+        self,
+        signal: SignalEvent,
+        portfolio: Portfolio,
+        current_price: Decimal | None,
+    ) -> RiskCheck:
+        # Only check for entry signals
+        if "EXIT" in signal.signal_type or "CLOSE" in signal.signal_type:
+            return RiskCheck(name="concentration", passed=True)
+
+        total = float(portfolio.total_value())
+        if total == 0:
+            return RiskCheck(name="concentration", passed=True)
+
+        # Check if symbol already has a position at max size
+        existing = portfolio.positions.get(signal.symbol)
+        if existing and current_price:
+            position_value = float(current_price) * abs(existing.quantity)
+            concentration = position_value / total
+            if concentration >= self._max_position_pct:
+                return RiskCheck(
+                    name="concentration",
+                    passed=False,
+                    reason=(
+                        f"{signal.symbol} position {concentration*100:.1f}% >= "
+                        f"max {self._max_position_pct*100:.1f}%"
+                    ),
+                )
+        return RiskCheck(name="concentration", passed=True)
+
+    def _check_delta_exposure(self, signal: SignalEvent) -> RiskCheck:
+        new_delta = signal.metadata.get("delta", 0.0)
+        projected = self._net_portfolio_delta + new_delta
+
+        if abs(projected) > self._max_delta:
+            return RiskCheck(
+                name="delta_exposure",
+                passed=False,
+                reason=(
+                    f"Net delta {projected:.0f} would exceed limit ±{self._max_delta}"
+                ),
+            )
+        return RiskCheck(name="delta_exposure", passed=True)

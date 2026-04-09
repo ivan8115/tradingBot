@@ -1,0 +1,204 @@
+"""
+Cash-Secured Put leg of the Wheel Strategy.
+Handles strike selection, entry conditions, and early exit rules.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Optional
+
+from analysis.greeks import calculate_greeks, calculate_iv, dte_to_years, expected_move
+from core.config import CSPConfig
+
+
+@dataclass
+class OptionContract:
+    """Represents a single options contract from a chain."""
+    symbol: str             # underlying
+    contract_id: str        # Alpaca contract symbol (e.g. AAPL240119P00180000)
+    option_type: str        # "put" | "call"
+    strike: Decimal
+    expiry: date
+    dte: int
+    bid: Decimal
+    ask: Decimal
+    delta: float
+    iv: float
+    open_interest: int = 0
+    volume: int = 0
+
+    @property
+    def mid(self) -> Decimal:
+        return (self.bid + self.ask) / Decimal("2")
+
+    @property
+    def spread_pct(self) -> float:
+        if self.mid == 0:
+            return 1.0
+        return float((self.ask - self.bid) / self.mid)
+
+
+@dataclass
+class CSPPosition:
+    """Tracks an open Cash-Secured Put position."""
+    symbol: str
+    contract: OptionContract
+    premium_received: Decimal       # credit per share (× 100 for total)
+    opened_at: datetime
+    contracts: int = 1              # number of contracts (each = 100 shares)
+    cost_basis: Optional[Decimal] = None  # set if assigned
+
+    @property
+    def max_profit(self) -> Decimal:
+        return self.premium_received * 100 * self.contracts
+
+    @property
+    def collateral_required(self) -> Decimal:
+        """Cash needed to secure the put (strike × 100 × contracts)."""
+        return self.contract.strike * 100 * self.contracts
+
+    def current_value(self, current_contract_price: Decimal) -> Decimal:
+        """Current value of the SHORT put position (liability)."""
+        return current_contract_price * 100 * self.contracts
+
+    def unrealized_pnl(self, current_contract_price: Decimal) -> Decimal:
+        """
+        For a short put: P&L = premium received - current value.
+        Positive = profit (option lost value).
+        """
+        return self.max_profit - self.current_value(current_contract_price)
+
+    def profit_pct(self, current_contract_price: Decimal) -> float:
+        if self.max_profit == 0:
+            return 0.0
+        return float(self.unrealized_pnl(current_contract_price) / self.max_profit)
+
+
+class CashSecuredPutLeg:
+    """
+    Manages the CSP leg of the Wheel Strategy.
+    Selects strikes, evaluates entry conditions, and signals exits.
+    """
+
+    def __init__(self, config: CSPConfig) -> None:
+        self._cfg = config
+
+    def select_strike(
+        self,
+        chain: list[OptionContract],
+        underlying_price: float,
+        risk_free_rate: float = 0.05,
+    ) -> Optional[OptionContract]:
+        """
+        Find the put contract that best matches our target delta,
+        within the target DTE window and meeting minimum premium.
+
+        Selection criteria (in order):
+        1. DTE in [min_dte, max_dte]
+        2. Bid >= min_premium
+        3. Spread < 5% of mid (liquidity check)
+        4. Delta closest to target_delta
+        """
+        puts = [c for c in chain if c.option_type == "put"]
+
+        # Filter by DTE
+        in_window = [
+            c for c in puts
+            if self._cfg.min_dte <= c.dte <= self._cfg.max_dte
+        ]
+        if not in_window:
+            return None
+
+        # Filter by minimum premium
+        min_prem = Decimal(str(self._cfg.min_premium))
+        liquid = [c for c in in_window if c.bid >= min_prem and c.spread_pct < 0.05]
+        if not liquid:
+            # Relax spread filter
+            liquid = [c for c in in_window if c.bid >= min_prem]
+        if not liquid:
+            return None
+
+        # Select closest to target delta
+        target = self._cfg.target_delta  # negative (e.g. -0.28)
+        return min(liquid, key=lambda c: abs(c.delta - target))
+
+    def check_entry_conditions(
+        self,
+        symbol: str,
+        underlying_price: float,
+        iv_rank: float,
+        trend_direction: str,
+        available_cash: Decimal,
+        contract: OptionContract,
+    ) -> tuple[bool, str]:
+        """
+        Validate that all entry conditions are met before opening a CSP.
+
+        Returns (approved, reason_if_rejected)
+        """
+        # IV Rank threshold
+        if iv_rank < self._cfg.min_iv_rank:
+            return False, f"IV Rank {iv_rank:.0f} < minimum {self._cfg.min_iv_rank}"
+
+        # Underlying trend should be neutral-to-bullish (not bearish)
+        if trend_direction == "downtrend":
+            return False, "Underlying in downtrend — not ideal for CSP"
+
+        # Cash requirement
+        collateral = contract.strike * 100
+        if available_cash < collateral:
+            return False, f"Insufficient cash: need ${collateral:,.0f}, have ${available_cash:,.0f}"
+
+        # Strike should be below current price (OTM put)
+        if contract.strike >= Decimal(str(underlying_price)):
+            return False, f"Strike {contract.strike} >= underlying {underlying_price:.2f} (not OTM)"
+
+        return True, ""
+
+    def should_close_early(
+        self,
+        position: CSPPosition,
+        current_contract_price: Decimal,
+    ) -> tuple[bool, str]:
+        """
+        Check if we should close the CSP before expiry.
+
+        Close when:
+        1. Profit target reached (e.g. 50% of max profit)
+        2. Stop loss triggered (2× premium received)
+        3. DTE ≤ 7 (risk of gamma explosion near expiry)
+        """
+        profit_pct = position.profit_pct(current_contract_price)
+
+        # Take profit
+        if profit_pct >= self._cfg.profit_target_pct:
+            return True, f"Profit target: {profit_pct*100:.0f}% of max"
+
+        # Stop loss
+        pnl = position.unrealized_pnl(current_contract_price)
+        stop_threshold = -self._cfg.stop_loss_multiplier * float(position.max_profit)
+        if float(pnl) <= stop_threshold:
+            return True, f"Stop loss: lost {abs(float(pnl)):.2f} (>{self._cfg.stop_loss_multiplier}× premium)"
+
+        # DTE threshold — close or roll
+        if position.contract.dte <= 7:
+            return True, f"DTE={position.contract.dte} ≤ 7 — closing to avoid gamma risk"
+
+        return False, ""
+
+    def is_assigned(self, position: CSPPosition, underlying_price: Decimal) -> bool:
+        """
+        Returns True if the put is in-the-money at expiry (assignment likely).
+        In practice, Alpaca auto-assigns ITM options at expiry.
+        """
+        return underlying_price < position.contract.strike and position.contract.dte == 0
+
+    def cost_basis_after_assignment(self, position: CSPPosition) -> Decimal:
+        """
+        Effective cost basis of shares received on assignment.
+        cost_basis = strike - premium_received_per_share
+        """
+        return position.contract.strike - position.premium_received
