@@ -200,24 +200,30 @@ class TradingScheduler:
         for wheel in self._wheel_strategies:
             state = wheel.get_state()
             for symbol, data in state.items():
-                wheel_state = data.get("state")
-                if wheel_state not in ("csp_open", "cc_open"):
-                    continue
-                pos = wheel._positions.get(symbol)
-                if not pos:
-                    continue
-                contract = None
-                if pos.csp_position:
-                    contract = pos.csp_position.contract
-                elif pos.cc_position:
-                    contract = pos.cc_position.contract
-                if contract:
-                    threshold = 7
-                    if contract.dte <= threshold + 3:
-                        logger.warning(
-                            f"[DTE] {symbol} {wheel_state}: DTE={contract.dte} "
-                            f"approaching roll threshold={threshold}"
-                        )
+                try:
+                    wheel_state = data.get("state")
+                    if wheel_state not in ("csp_open", "cc_open"):
+                        continue
+                    pos = wheel._positions.get(symbol)
+                    if not pos:
+                        continue
+                    contract = None
+                    if pos.csp_position:
+                        contract = pos.csp_position.contract
+                        threshold = wheel._cfg.csp.roll_when_dte
+                    elif pos.cc_position:
+                        contract = pos.cc_position.contract
+                        threshold = wheel._cfg.cc.roll_when_dte
+                    else:
+                        threshold = wheel._cfg.csp.roll_when_dte
+                    if contract:
+                        if contract.dte <= threshold + 3:
+                            logger.warning(
+                                f"[DTE] {symbol} {wheel_state}: DTE={contract.dte} "
+                                f"approaching roll threshold={threshold}"
+                            )
+                except Exception as e:
+                    logger.warning(f"[DTE] Error checking DTE warning for {symbol}: {e}")
 
     async def _pre_close(self) -> None:
         if not self._is_market_open():
