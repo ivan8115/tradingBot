@@ -235,13 +235,15 @@ class BrokerClient:
         side: str,
         order_type: str = "limit",
         limit_price: Decimal | None = None,
-        time_in_force: str = "day",
     ) -> str:
         """Submit an options order. Returns Alpaca order ID."""
+        if order_type == "limit" and limit_price is None:
+            raise ValueError("limit_price is required for limit orders")
+
         order_side = OrderSide.BUY if side == "buy" else OrderSide.SELL
 
         try:
-            if order_type == "limit" and limit_price is not None:
+            if order_type == "limit":
                 request = LimitOrderRequest(
                     symbol=contract_symbol,
                     qty=qty,
@@ -259,7 +261,7 @@ class BrokerClient:
 
             logger.info(
                 f"[Options] Submitting {order_type} {side} {qty}x {contract_symbol} "
-                f"@ {limit_price or 'market'}"
+                f"@ {limit_price if limit_price is not None else 'market'}"
             )
             order = self._client.submit_order(request)
             logger.info(f"[Options] Order submitted: {order.id}")
