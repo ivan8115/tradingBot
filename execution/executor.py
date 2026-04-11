@@ -14,7 +14,7 @@ from core.events import FillEvent, OrderEvent, SignalEvent
 from database.migrations import get_session_factory
 from database.models import Signal, Trade
 from datetime import datetime
-from execution.order_builder import OrderBuilder
+from execution.order_builder import BUY_SIGNALS, OPTIONS_SIGNALS, OrderBuilder
 
 
 class Executor:
@@ -60,14 +60,8 @@ class Executor:
 
         # Submit to broker
         try:
-            OPTIONS_SIGNAL_TYPES = {
-                "SELL_PUT", "SELL_CALL", "BUY_TO_CLOSE_PUT", "BUY_TO_CLOSE_CALL"
-            }
-            is_options = signal.signal_type in OPTIONS_SIGNAL_TYPES
-            buy_side = signal.signal_type in (
-                "ENTRY_LONG", "BUY_TO_CLOSE_PUT", "BUY_TO_CLOSE_CALL"
-            )
-            side = "buy" if buy_side else "sell"
+            is_options = signal.signal_type in OPTIONS_SIGNALS
+            side = "buy" if signal.signal_type in BUY_SIGNALS else "sell"
 
             if is_options:
                 contract_id = signal.metadata.get("contract_id")
