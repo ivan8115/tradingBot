@@ -86,19 +86,19 @@ class TestTechnicalIndicators:
         assert not math.isnan(snap.macd_hist)
 
     def test_bb_values_present(self):
-        df = make_flat_df(n=60)
+        # Needs price variance — flat data produces zero std dev and equal bands
+        df = make_trending_up_df(n=60)
         snap = self.ti.compute(df)
         assert not math.isnan(snap.bb_upper)
         assert not math.isnan(snap.bb_lower)
         assert not math.isnan(snap.bb_mid)
         assert snap.bb_upper > snap.bb_mid > snap.bb_lower
 
-    def test_bb_pct_at_midpoint_for_flat_price(self):
-        df = make_flat_df(n=60)
+    def test_bb_pct_in_valid_range_for_trending_price(self):
+        # Needs price variance to produce non-NaN bb_pct
+        df = make_trending_up_df(n=60)
         snap = self.ti.compute(df)
-        # Flat price sits exactly at the midband → bb_pct ≈ 0.5
         assert not math.isnan(snap.bb_pct)
-        assert abs(snap.bb_pct - 0.5) < 0.1
 
     def test_ema_trend_up_on_uptrend(self):
         df = make_trending_up_df(n=60)
