@@ -156,8 +156,13 @@ class MarketDataStream:
             # --- Assignment handling ---
             if event_type == "assigned":
                 order = update.order
-                qty = int(float(getattr(update, "qty", 0) or 0))
+                raw_qty = getattr(update, "qty", 0) or 0
+                qty = int(Decimal(str(raw_qty)))
                 price = getattr(update, "price", None)
+
+                if not price:
+                    logger.warning("Assignment update missing price for %s; skipping", order.symbol)
+                    return
 
                 fill = FillEvent(
                     order_id=str(order.id),
@@ -165,11 +170,12 @@ class MarketDataStream:
                     strategy_id=order.client_order_id or "wheel",
                     side="sell",
                     filled_qty=qty,
-                    fill_price=Decimal(str(price)) if price else Decimal("0"),
+                    fill_price=Decimal(str(price)),
                     commission=Decimal("0"),
                     is_options=True,
+                    option_contract_id=order.symbol,
                     filled_at=update.timestamp,
-                    metadata={"leg": "assignment", "quantity": qty},
+                    metadata={"leg": "assignment"},
                 )
                 if self._fill_handler:
                     await self._fill_handler(fill)

@@ -11,7 +11,7 @@ from broker.market_data import MarketDataStream
 from core.events import FillEvent
 
 
-def _make_assignment_update(symbol="AMD", qty=100, strike=120.0):
+def _make_assignment_update(symbol="AMD240119P00120000", qty=100, strike=120.0):
     update = MagicMock()
     update.event = "assigned"
     update.timestamp = datetime.now(timezone.utc)
@@ -40,16 +40,17 @@ async def test_assignment_creates_fill_event_with_leg_metadata():
     stream = MarketDataStream()
     stream._fill_handler = capture_fill
 
-    update = _make_assignment_update(symbol="AMD", qty=100, strike=120.0)
+    update = _make_assignment_update(symbol="AMD240119P00120000", qty=100, strike=120.0)
     await stream._on_trade_update(update)
 
     assert len(received) == 1
     fill = received[0]
-    assert fill.symbol == "AMD"
+    assert fill.symbol == "AMD240119P00120000"
     assert fill.filled_qty == 100
     assert fill.metadata.get("leg") == "assignment"
     assert fill.is_options is True
     assert fill.strategy_id == "wheel"
+    assert fill.option_contract_id == "AMD240119P00120000"
 
 
 @pytest.mark.asyncio
@@ -65,6 +66,25 @@ async def test_non_assignment_fill_event_is_not_flagged():
 
     update = MagicMock()
     update.event = "new"
+    await stream._on_trade_update(update)
+
+    assert received == []
+
+
+@pytest.mark.asyncio
+async def test_assignment_with_missing_price_is_skipped():
+    """Assignment update without a price should be skipped (no FillEvent emitted)."""
+    received: list[FillEvent] = []
+
+    async def capture_fill(fill: FillEvent) -> None:
+        received.append(fill)
+
+    stream = MarketDataStream()
+    stream._fill_handler = capture_fill
+
+    update = _make_assignment_update(symbol="AMD240119P00120000", qty=100, strike=120.0)
+    update.price = None  # simulate missing price
+
     await stream._on_trade_update(update)
 
     assert received == []
