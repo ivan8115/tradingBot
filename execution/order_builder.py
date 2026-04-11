@@ -15,11 +15,11 @@ from core.config import settings
 from core.events import OrderEvent, SignalEvent
 
 # Signal types that map to a buy-side order
-_BUY_SIGNALS = {"ENTRY_LONG", "BUY_TO_CLOSE_PUT", "BUY_TO_CLOSE_CALL"}
+BUY_SIGNALS = {"ENTRY_LONG", "BUY_TO_CLOSE_PUT", "BUY_TO_CLOSE_CALL"}
 # Signal types that map to a sell-side order
 _SELL_SIGNALS = {"EXIT_LONG", "ENTRY_SHORT", "SELL_PUT", "SELL_CALL", "EXIT_SHORT"}
 # Options signals
-_OPTIONS_SIGNALS = {"SELL_PUT", "BUY_TO_CLOSE_PUT", "SELL_CALL", "BUY_TO_CLOSE_CALL"}
+OPTIONS_SIGNALS = {"SELL_PUT", "BUY_TO_CLOSE_PUT", "SELL_CALL", "BUY_TO_CLOSE_CALL"}
 
 
 class OrderBuilder:
@@ -59,8 +59,8 @@ class OrderBuilder:
             ask: Current best ask
             option_contract_id: Alpaca contract symbol for options orders
         """
-        is_options = signal.signal_type in _OPTIONS_SIGNALS
-        side = "buy" if signal.signal_type in _BUY_SIGNALS else "sell"
+        is_options = signal.signal_type in OPTIONS_SIGNALS
+        side = "buy" if signal.signal_type in BUY_SIGNALS else "sell"
 
         # Determine order type (exit signals always use market for certainty)
         if signal.signal_type in ("EXIT_LONG", "EXIT_SHORT", "BUY_TO_CLOSE_PUT", "BUY_TO_CLOSE_CALL"):

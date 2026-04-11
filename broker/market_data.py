@@ -149,9 +149,39 @@ class MarketDataStream:
                 await asyncio.sleep(self._reconnect_delay)
 
     async def _on_trade_update(self, update) -> None:
-        """Convert Alpaca trade update to FillEvent when an order fills."""
+        """Convert Alpaca trade update to FillEvent for fills and assignments."""
         try:
             event_type = getattr(update, "event", None)
+
+            # --- Assignment handling ---
+            if event_type == "assigned":
+                order = update.order
+                raw_qty = getattr(update, "qty", 0) or 0
+                qty = int(Decimal(str(raw_qty)))
+                price = getattr(update, "price", None)
+
+                if not price:
+                    logger.warning("Assignment update missing price for %s; skipping", order.symbol)
+                    return
+
+                fill = FillEvent(
+                    order_id=str(order.id),
+                    symbol=order.symbol,
+                    strategy_id=order.client_order_id or "wheel",
+                    side="sell",
+                    filled_qty=qty,
+                    fill_price=Decimal(str(price)),
+                    commission=Decimal("0"),
+                    is_options=True,
+                    option_contract_id=order.symbol,
+                    filled_at=update.timestamp,
+                    metadata={"leg": "assignment"},
+                )
+                if self._fill_handler:
+                    await self._fill_handler(fill)
+                return
+
+            # --- Normal fill handling ---
             if event_type not in ("fill", "partial_fill"):
                 return
 
@@ -161,6 +191,8 @@ class MarketDataStream:
             if not fill_price_raw or fill_qty == 0:
                 return
 
+            is_options = getattr(order, "asset_class", None) == "us_option"
+
             fill = FillEvent(
                 order_id=str(order.id),
                 symbol=order.symbol,
@@ -169,6 +201,8 @@ class MarketDataStream:
                 filled_qty=fill_qty,
                 fill_price=Decimal(str(fill_price_raw)),
                 commission=Decimal("0"),    # Alpaca provides commission separately
+                is_options=is_options,
+                option_contract_id=order.symbol if is_options else None,
                 filled_at=update.timestamp,
             )
 

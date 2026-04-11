@@ -28,16 +28,17 @@ strategies:
   wheel:
     enabled: true
     symbols:
-      - AAPL
-      - TSLA
+      - AMD
+      - MARA
     csp:
       target_delta: -0.28
       min_dte: 21
       max_dte: 45
-      profit_target_pct: 0.50        # Close at 50% of max profit
-      stop_loss_multiplier: 2.0      # Stop at 2× premium received
-      min_premium: 1.00
-      min_iv_rank: 50
+      profit_target_pct: 0.50
+      stop_loss_multiplier: 2.0
+      min_premium: 0.50
+      min_iv_rank: 40
+      roll_when_dte: 7
     cc:
       target_delta: 0.30
       min_dte: 21

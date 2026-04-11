@@ -242,6 +242,11 @@ def cmd_trade(args) -> None:
         syms = settings.strategies.momentum.symbols or settings.universe.watchlist
         strategies.append(MomentumStrategy(syms))
 
+    if settings.strategies.wheel.enabled:
+        from strategies.wheel.wheel_strategy import WheelStrategy
+        wheel_syms = settings.strategies.wheel.symbols
+        strategies.append(WheelStrategy(wheel_syms))
+
     if not strategies:
         print("No strategies enabled. Check config.yaml.")
         return

@@ -184,8 +184,8 @@ class CashSecuredPutLeg:
             return True, f"Stop loss: lost {abs(float(pnl)):.2f} (>{self._cfg.stop_loss_multiplier}× premium)"
 
         # DTE threshold — close or roll
-        if position.contract.dte <= 7:
-            return True, f"DTE={position.contract.dte} ≤ 7 — closing to avoid gamma risk"
+        if position.contract.dte <= self._cfg.roll_when_dte:
+            return True, f"DTE={position.contract.dte} <= {self._cfg.roll_when_dte} — closing for roll"
 
         return False, ""
 

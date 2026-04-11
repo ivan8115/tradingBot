@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TradingBot Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --card: #1a1f2e;
+      --border: #2a3042;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --positive: #10b981;
+      --negative: #ef4444;
+      --amber: #f59e0b;
+
+      --state-scanning: #6b7280;
+      --state-csp: #3b82f6;
+      --state-assigned: #f59e0b;
+      --state-cc: #10b981;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+      padding-bottom: 40px;
+    }
+
+    /* Header / account bar */
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    header h1 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-right: auto;
+    }
+
+    .mode-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .mode-badge.paper { background: #1e3a5f; color: #60a5fa; }
+    .mode-badge.live  { background: #3b1a1a; color: #f87171; }
+
+    .acct-field {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+    .acct-field .label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .acct-field .value { font-size: 15px; font-weight: 600; }
+
+    /* Main layout */
+    main {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 24px;
+    }
+
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 12px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 20px;
+    }
+
+    /* Strategy cards */
+    #strategy-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+    }
+
+    .strategy-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+
+    .strategy-card .sym {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .state-chip {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .state-SCANNING  { background: rgba(107,114,128,0.2); color: var(--state-scanning); border: 1px solid var(--state-scanning); }
+    .state-CSP_OPEN  { background: rgba(59,130,246,0.15); color: var(--state-csp);      border: 1px solid var(--state-csp); }
+    .state-ASSIGNED  { background: rgba(245,158,11,0.15); color: var(--state-assigned); border: 1px solid var(--state-assigned); }
+    .state-CC_OPEN   { background: rgba(16,185,129,0.15); color: var(--state-cc);       border: 1px solid var(--state-cc); }
+
+    .strategy-card .premium {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .empty-note {
+      color: var(--muted);
+      font-style: italic;
+      padding: 8px 0;
+    }
+
+    /* Tables */
+    .table-wrap { overflow-x: auto; }
+
+    table { width: 100%; border-collapse: collapse; }
+
+    th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .positive { color: var(--positive); }
+    .negative { color: var(--negative); }
+
+    /* Performance stats */
+    #perf-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+
+    .stat-value {
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    /* Equity chart */
+    .chart-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 20px;
+    }
+
+    #equity-chart {
+      width: 100% !important;
+      height: 220px !important;
+    }
+
+    /* Status bar */
+    #status-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--card);
+      border-top: 1px solid var(--border);
+      padding: 6px 24px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--state-scanning);
+      flex-shrink: 0;
+    }
+    .status-dot.connected    { background: var(--positive); }
+    .status-dot.reconnecting { background: var(--amber); }
+    .status-dot.error        { background: var(--negative); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>TradingBot Dashboard</h1>
+  <span id="mode-badge" class="mode-badge paper">PAPER</span>
+  <div class="acct-field">
+    <span class="label">Cash</span>
+    <span class="value" id="acct-cash">&#8212;</span>
+  </div>
+  <div class="acct-field">
+    <span class="label">Equity</span>
+    <span class="value" id="acct-equity">&#8212;</span>
+  </div>
+  <div class="acct-field">
+    <span class="label">Buying Power</span>
+    <span class="value" id="acct-bp">&#8212;</span>
+  </div>
+</header>
+
+<main>
+
+  <section>
+    <div class="section-title">Wheel Strategy</div>
+    <div id="strategy-cards">
+      <div class="empty-note">No active strategies.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-title">Open Positions</div>
+    <div class="table-wrap" id="positions-wrap">
+      <div class="empty-note">No open positions.</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-title">Performance</div>
+    <div id="perf-stats">
+      <div class="stat-card">
+        <div class="stat-label">Win Rate</div>
+        <div class="stat-value" id="stat-winrate">&#8212;</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Return</div>
+        <div class="stat-value" id="stat-return">&#8212;</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Max Drawdown</div>
+        <div class="stat-value" id="stat-drawdown">&#8212;</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Trades</div>
+        <div class="stat-value" id="stat-trades">&#8212;</div>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <div class="section-title">Equity Curve</div>
+      <canvas id="equity-chart"></canvas>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="section-title">Trade Log</div>
+    <div class="table-wrap" id="trade-log-wrap">
+      <div class="empty-note">No trades yet.</div>
+    </div>
+  </section>
+
+</main>
+
+<div id="status-bar">
+  <div class="status-dot" id="status-dot"></div>
+  <span id="status-text">Connecting...</span>
+</div>
+
+<script>
+  /* XSS-safe helper */
+  function escapeHTML(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  /* Formatters */
+  function fmt$(v) {
+    return '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+  function fmtPct(v) {
+    return (Number(v) * 100).toFixed(2) + '%';
+  }
+
+  /* Build a <th> node */
+  function th(text) {
+    var el = document.createElement('th');
+    el.textContent = text;
+    return el;
+  }
+
+  /* Build a <td> node */
+  function td(text, cls) {
+    var el = document.createElement('td');
+    el.textContent = text;
+    if (cls) el.className = cls;
+    return el;
+  }
+
+  /* Equity chart */
+  var ctx = document.getElementById('equity-chart').getContext('2d');
+  var equityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Equity',
+        data: [],
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.08)',
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: true,
+        tension: 0.3
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {mode: 'index', intersect: false},
+      plugins: {
+        legend: {display: false},
+        tooltip: {
+          backgroundColor: '#1a1f2e',
+          borderColor: '#2a3042',
+          borderWidth: 1,
+          titleColor: '#94a3b8',
+          bodyColor: '#e2e8f0',
+          callbacks: {
+            label: function(c) { return ' ' + fmt$(c.parsed.y); }
+          }
+        }
+      },
+      scales: {
+        x: {display: false},
+        y: {
+          grid: {color: 'rgba(42,48,66,0.8)'},
+          ticks: {color: '#94a3b8', callback: function(v) { return fmt$(v); }},
+          border: {color: '#2a3042'}
+        }
+      }
+    }
+  });
+
+  /* Wheel state to CSS class */
+  function stateClass(raw) {
+    var s = String(raw).toUpperCase();
+    if (s === 'SCANNING') return 'state-SCANNING';
+    if (s === 'CSP_OPEN') return 'state-CSP_OPEN';
+    if (s === 'ASSIGNED') return 'state-ASSIGNED';
+    if (s === 'CC_OPEN')  return 'state-CC_OPEN';
+    return 'state-SCANNING';
+  }
+
+  /* Render account bar */
+  function renderAccountBar(account) {
+    var badge = document.getElementById('mode-badge');
+    var mode  = String(account.mode || 'PAPER');
+    badge.textContent = mode;
+    badge.className   = 'mode-badge ' + (mode.toUpperCase() === 'LIVE' ? 'live' : 'paper');
+    document.getElementById('acct-cash').textContent   = fmt$(account.cash   || 0);
+    document.getElementById('acct-equity').textContent = fmt$(account.equity || 0);
+    document.getElementById('acct-bp').textContent     = fmt$(account.buying_power || 0);
+  }
+
+  /* Render strategy cards */
+  function renderStrategyCards(strategy_state) {
+    var container = document.getElementById('strategy-cards');
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    var wheel   = (strategy_state && strategy_state.wheel) ? strategy_state.wheel : {};
+    var symbols = Object.keys(wheel);
+
+    if (symbols.length === 0) {
+      var note = document.createElement('div');
+      note.className = 'empty-note';
+      note.textContent = 'No active strategies.';
+      container.appendChild(note);
+      return;
+    }
+
+    symbols.forEach(function(sym) {
+      var info    = wheel[sym] || {};
+      var state   = String(info.state || 'SCANNING').toUpperCase();
+      var premium = info.premium != null ? info.premium : null;
+
+      var card = document.createElement('div');
+      card.className = 'strategy-card';
+
+      var symEl = document.createElement('div');
+      symEl.className = 'sym';
+      symEl.textContent = escapeHTML(sym);
+      card.appendChild(symEl);
+
+      var chip = document.createElement('div');
+      chip.className = 'state-chip ' + stateClass(state);
+      chip.textContent = escapeHTML(state.replace('_', ' '));
+      card.appendChild(chip);
+
+      if (premium !== null) {
+        var premEl = document.createElement('div');
+        premEl.className = 'premium';
+        premEl.textContent = 'Premium: ' + fmt$(premium);
+        card.appendChild(premEl);
+      }
+
+      container.appendChild(card);
+    });
+  }
+
+  /* Render positions table */
+  function renderPositions(positions) {
+    var wrap = document.getElementById('positions-wrap');
+    while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+
+    if (!positions || positions.length === 0) {
+      var note = document.createElement('div');
+      note.className = 'empty-note';
+      note.textContent = 'No open positions.';
+      wrap.appendChild(note);
+      return;
+    }
+
+    var table = document.createElement('table');
+    var thead = document.createElement('thead');
+    var hrow  = document.createElement('tr');
+    ['Symbol','Side','Qty','Entry','P&L','P&L %'].forEach(function(h) {
+      hrow.appendChild(th(h));
+    });
+    thead.appendChild(hrow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    positions.forEach(function(p) {
+      var pnl     = p.unrealized_pnl   || 0;
+      var entry   = p.avg_entry_price  || 0;
+      var qty     = p.quantity         || 0;
+      var cost    = entry * Math.abs(qty);
+      var pnlPct  = cost !== 0 ? pnl / cost : 0;
+      var cls     = pnl >= 0 ? 'positive' : 'negative';
+
+      var tr = document.createElement('tr');
+      var tdSym = document.createElement('td');
+      tdSym.style.fontWeight = '600';
+      tdSym.textContent = escapeHTML(p.symbol || '');
+      tr.appendChild(tdSym);
+      tr.appendChild(td(escapeHTML(p.side || '')));
+      tr.appendChild(td(String(qty)));
+      tr.appendChild(td(fmt$(entry)));
+      tr.appendChild(td(fmt$(pnl), cls));
+      tr.appendChild(td(fmtPct(pnlPct), cls));
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+  }
+
+  /* Load performance stats + equity curve */
+  function loadPerformance() {
+    fetch('/api/performance')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        document.getElementById('stat-winrate').textContent  = fmtPct(data.win_rate        || 0);
+        document.getElementById('stat-return').textContent   = fmtPct(data.total_return_pct || 0);
+        document.getElementById('stat-drawdown').textContent = fmtPct(data.max_drawdown_pct || 0);
+        document.getElementById('stat-trades').textContent   = String(data.trade_count      || 0);
+
+        var curve = data.equity_curve || [];
+        equityChart.data.labels              = curve.map(function(pt) { return pt.ts || ''; });
+        equityChart.data.datasets[0].data    = curve.map(function(pt) { return pt.equity; });
+        equityChart.update('none');
+      })
+      .catch(function(err) { console.warn('[Dashboard] /api/performance error:', err); });
+  }
+
+  /* Load trade log */
+  function loadTrades() {
+    fetch('/api/trades')
+      .then(function(r) { return r.json(); })
+      .then(function(trades) {
+        var wrap = document.getElementById('trade-log-wrap');
+        while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+
+        if (!trades || trades.length === 0) {
+          var note = document.createElement('div');
+          note.className = 'empty-note';
+          note.textContent = 'No trades yet.';
+          wrap.appendChild(note);
+          return;
+        }
+
+        var table = document.createElement('table');
+        var thead = document.createElement('thead');
+        var hrow  = document.createElement('tr');
+        ['Symbol','Side','Qty','Fill Price','Options','Filled At'].forEach(function(h) {
+          hrow.appendChild(th(h));
+        });
+        thead.appendChild(hrow);
+        table.appendChild(thead);
+
+        var tbody = document.createElement('tbody');
+        trades.forEach(function(t) {
+          var tr = document.createElement('tr');
+
+          var tdSym = document.createElement('td');
+          tdSym.style.fontWeight = '600';
+          tdSym.textContent = escapeHTML(t.symbol || '');
+          tr.appendChild(tdSym);
+
+          tr.appendChild(td(escapeHTML(t.side || '')));
+          tr.appendChild(td(String(t.quantity || '')));
+          tr.appendChild(td(fmt$(t.fill_price || 0)));
+          tr.appendChild(td(t.is_options ? 'Yes' : 'No'));
+
+          var tdTime = document.createElement('td');
+          tdTime.style.color = '#94a3b8';
+          tdTime.textContent = escapeHTML(String(t.filled_at || ''));
+          tr.appendChild(tdTime);
+
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+      })
+      .catch(function(err) { console.warn('[Dashboard] /api/trades error:', err); });
+  }
+
+  /* WebSocket with exponential backoff */
+  var ws = null;
+  var reconnectDelay = 1000;
+  var MAX_DELAY = 30000;
+
+  function setStatus(state, text) {
+    document.getElementById('status-dot').className = 'status-dot ' + state;
+    document.getElementById('status-text').textContent = text;
+  }
+
+  function connect() {
+    setStatus('reconnecting', 'Connecting...');
+    var url = 'ws://' + window.location.host + '/ws';
+    ws = new WebSocket(url);
+
+    ws.onopen = function() {
+      reconnectDelay = 1000;
+      setStatus('connected', 'Connected');
+      fetch('/api/account')
+        .then(function(r) { return r.json(); })
+        .then(renderAccountBar)
+        .catch(function() {});
+    };
+
+    ws.onmessage = function(evt) {
+      var msg;
+      try { msg = JSON.parse(evt.data); } catch(e) { return; }
+      if (msg.type === 'update') {
+        if (msg.account)        renderAccountBar(msg.account);
+        if (msg.positions)      renderPositions(msg.positions);
+        if (msg.strategy_state) renderStrategyCards(msg.strategy_state);
+      }
+    };
+
+    ws.onclose = function() {
+      var secs = (reconnectDelay / 1000).toFixed(0);
+      setStatus('reconnecting', 'Reconnecting in ' + secs + 's...');
+      setTimeout(function() {
+        reconnectDelay = Math.min(reconnectDelay * 2, MAX_DELAY);
+        connect();
+      }, reconnectDelay);
+    };
+
+    ws.onerror = function() {
+      setStatus('error', 'Connection error');
+      ws.close();
+    };
+  }
+
+  /* Init */
+  connect();
+  loadPerformance();
+  loadTrades();
+</script>
+</body>
+</html>

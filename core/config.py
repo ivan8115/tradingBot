@@ -47,6 +47,7 @@ class CSPConfig(BaseModel):
     stop_loss_multiplier: float = 2.0
     min_premium: float = 1.00
     min_iv_rank: float = 50.0
+    roll_when_dte: int = 7       # close/roll when DTE reaches this threshold
 
 
 class CCConfig(BaseModel):

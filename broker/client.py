@@ -6,11 +6,15 @@ Paper vs. live is a config flag; all callers are unaware of the difference.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 from decimal import Decimal
 
+from alpaca.data.historical.option import OptionHistoricalDataClient
+from alpaca.data.requests import OptionSnapshotRequest
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
+from alpaca.trading.enums import ContractType, OrderSide, OrderType, TimeInForce
 from alpaca.trading.requests import (
+    GetOptionContractsRequest,
     GetOrdersRequest,
     LimitOrderRequest,
     MarketOrderRequest,
@@ -20,6 +24,7 @@ from loguru import logger
 
 from core.config import settings
 from core.exceptions import BrokerError, InsufficientFundsError, OrderError
+from strategies.wheel.csp_leg import OptionContract
 
 
 @dataclass
@@ -57,6 +62,10 @@ class BrokerClient:
             api_key=settings.alpaca_api_key,
             secret_key=settings.alpaca_secret_key,
             paper=settings.alpaca_paper,
+        )
+        self._option_data = OptionHistoricalDataClient(
+            api_key=settings.alpaca_api_key,
+            secret_key=settings.alpaca_secret_key,
         )
         mode = "PAPER" if settings.alpaca_paper else "LIVE"
         logger.info(f"BrokerClient initialized [{mode}]")
@@ -124,6 +133,147 @@ class BrokerClient:
             unrealized_pnl_pct=Decimal(str(p.unrealized_plpc)),
             side=p.side.value,
         )
+
+    # ------------------------------------------------------------------
+    # Options
+    # ------------------------------------------------------------------
+
+    def get_options_chain(
+        self,
+        symbol: str,
+        dte_min: int = 21,
+        dte_max: int = 45,
+        option_type: str = "put",     # "put" | "call" | "both"
+    ) -> list[OptionContract]:
+        """
+        Fetch options chain from Alpaca and return normalized OptionContract list.
+        Filters by DTE window. Returns [] on any error (non-fatal).
+        """
+        today = date.today()
+        exp_gte = today + timedelta(days=dte_min)
+        exp_lte = today + timedelta(days=dte_max)
+
+        try:
+            contract_type = None
+            if option_type == "put":
+                contract_type = ContractType.PUT
+            elif option_type == "call":
+                contract_type = ContractType.CALL
+
+            req = GetOptionContractsRequest(
+                underlying_symbols=[symbol],
+                expiration_date_gte=exp_gte,
+                expiration_date_lte=exp_lte,
+                type=contract_type,
+            )
+            resp = self._client.get_option_contracts(req)
+            raw_contracts = resp.option_contracts if resp else []
+        except Exception as e:
+            logger.warning(f"[Options] Failed to fetch chain for {symbol}: {e}")
+            return []
+
+        if not raw_contracts:
+            return []
+
+        # Fetch snapshots for greeks + quotes
+        contract_symbols = [c.symbol for c in raw_contracts]
+        snapshots: dict = {}
+        try:
+            snap_req = OptionSnapshotRequest(symbol_or_symbols=contract_symbols)
+            snapshots = self._option_data.get_option_snapshot(snap_req)
+        except Exception as e:
+            logger.warning(f"[Options] Snapshot fetch failed for {symbol}: {e}")
+            # Continue — use close_price fallback
+
+        result: list[OptionContract] = []
+        for raw in raw_contracts:
+            expiry = raw.expiration_date
+            if isinstance(expiry, str):
+                expiry = date.fromisoformat(expiry)
+            dte = (expiry - today).days
+            if not (dte_min <= dte <= dte_max):
+                continue
+
+            snap = snapshots.get(raw.symbol)
+            if snap and snap.latest_quote:
+                bid = Decimal(str(snap.latest_quote.bid_price or 0))
+                ask = Decimal(str(snap.latest_quote.ask_price or 0))
+            else:
+                mid_fallback = Decimal(str(raw.close_price or 0))
+                bid = mid_fallback * Decimal("0.95")
+                ask = mid_fallback * Decimal("1.05")
+
+            if snap and snap.greeks:
+                delta = float(snap.greeks.delta or 0)
+                iv = float(snap.greeks.implied_volatility or 0)
+            else:
+                delta = 0.0
+                iv = 0.0
+
+            result.append(OptionContract(
+                symbol=symbol,
+                contract_id=raw.symbol,
+                option_type=raw.type.value if hasattr(raw.type, "value") else str(raw.type),
+                strike=Decimal(str(raw.strike_price)),
+                expiry=expiry,
+                dte=dte,
+                bid=bid,
+                ask=ask,
+                delta=delta,
+                iv=iv,
+                open_interest=int(raw.open_interest or 0),
+                volume=int(raw.volume or 0),
+            ))
+
+        logger.info(f"[Options] {symbol}: {len(result)} contracts fetched (DTE {dte_min}-{dte_max})")
+        return result
+
+    def submit_options_order(
+        self,
+        contract_symbol: str,
+        qty: int,
+        side: str,
+        order_type: str = "limit",
+        limit_price: Decimal | None = None,
+    ) -> str:
+        """Submit an options order. Returns Alpaca order ID."""
+        if order_type == "limit" and limit_price is None:
+            raise ValueError("limit_price is required for limit orders")
+
+        order_side = OrderSide.BUY if side == "buy" else OrderSide.SELL
+
+        try:
+            if order_type == "limit":
+                request = LimitOrderRequest(
+                    symbol=contract_symbol,
+                    qty=qty,
+                    side=order_side,
+                    time_in_force=TimeInForce.DAY,
+                    limit_price=float(limit_price),
+                )
+            else:
+                request = MarketOrderRequest(
+                    symbol=contract_symbol,
+                    qty=qty,
+                    side=order_side,
+                    time_in_force=TimeInForce.DAY,
+                )
+
+            logger.info(
+                f"[Options] Submitting {order_type} {side} {qty}x {contract_symbol} "
+                f"@ {limit_price if limit_price is not None else 'market'}"
+            )
+            order = self._client.submit_order(request)
+            logger.info(f"[Options] Order submitted: {order.id}")
+            return str(order.id)
+
+        except Exception as e:
+            msg = str(e).lower()
+            if "insufficient" in msg or "buying power" in msg:
+                raise InsufficientFundsError(
+                    f"Insufficient funds for options order {contract_symbol}"
+                ) from e
+            raise OrderError(f"Options order failed for {contract_symbol}: {e}") from e
 
     # ------------------------------------------------------------------
     # Orders
