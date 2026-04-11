@@ -60,11 +60,34 @@ class Executor:
 
         # Submit to broker
         try:
-            if order.order_type == "market":
+            OPTIONS_SIGNAL_TYPES = {
+                "SELL_PUT", "SELL_CALL", "BUY_TO_CLOSE_PUT", "BUY_TO_CLOSE_CALL"
+            }
+            is_options = signal.signal_type in OPTIONS_SIGNAL_TYPES
+            buy_side = signal.signal_type in (
+                "ENTRY_LONG", "BUY_TO_CLOSE_PUT", "BUY_TO_CLOSE_CALL"
+            )
+            side = "buy" if buy_side else "sell"
+
+            if is_options:
+                contract_id = signal.metadata.get("contract_id")
+                if not contract_id:
+                    logger.error(f"Options signal missing contract_id: {signal.symbol}")
+                    return None
+                premium = signal.metadata.get("premium")
+                limit_price = Decimal(str(premium)) if premium else None
+                alpaca_id = self._broker.submit_options_order(
+                    contract_symbol=contract_id,
+                    qty=quantity,
+                    side=side,
+                    order_type="limit" if limit_price else "market",
+                    limit_price=limit_price,
+                )
+            elif order.order_type == "market":
                 alpaca_id = self._broker.submit_market_order(
                     symbol=signal.symbol,
                     qty=quantity,
-                    side="buy" if "ENTRY" in signal.signal_type or "BUY_TO_CLOSE" in signal.signal_type else "sell",
+                    side=side,
                 )
             else:
                 if not order.limit_price:
@@ -73,7 +96,7 @@ class Executor:
                 alpaca_id = self._broker.submit_limit_order(
                     symbol=signal.symbol,
                     qty=quantity,
-                    side="buy" if "ENTRY" in signal.signal_type or "BUY_TO_CLOSE" in signal.signal_type else "sell",
+                    side=side,
                     limit_price=order.limit_price,
                 )
 

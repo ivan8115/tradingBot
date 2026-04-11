@@ -103,3 +103,69 @@ def test_submit_options_order_raises_value_error_for_limit_without_price():
                 order_type="limit",
                 limit_price=None,
             )
+
+
+from datetime import datetime, timezone
+from execution.executor import Executor
+from execution.order_builder import OrderBuilder
+from core.events import SignalEvent
+
+
+def _make_signal(signal_type="SELL_PUT", symbol="AMD",
+                 contract_id="AMD240119P00120000", premium=2.10):
+    return SignalEvent(
+        strategy_id="wheel",
+        symbol=symbol,
+        signal_type=signal_type,
+        strength=0.8,
+        timestamp=datetime.now(timezone.utc),
+        metadata={
+            "leg": "csp_open",
+            "contract_id": contract_id,
+            "strike": 120.0,
+            "premium": premium,
+            "delta": -0.28,
+        },
+    )
+
+
+@pytest.mark.asyncio
+@patch("broker.client.TradingClient")
+@patch("broker.client.OptionHistoricalDataClient")
+async def test_executor_routes_sell_put_to_options_order(MockDataClient, MockTradingClient, tmp_path):
+    """SELL_PUT signal must call submit_order (options path), not equity market order."""
+    MockTradingClient.return_value.submit_order.return_value = _make_mock_order("opt-order-001")
+
+    from broker.client import BrokerClient
+    from database.migrations import init_db
+    broker = BrokerClient()
+    builder = OrderBuilder()
+    init_db(str(tmp_path / "test.db"))
+    executor = Executor(broker, builder, db_path=str(tmp_path / "test.db"))
+
+    signal = _make_signal("SELL_PUT")
+    await executor.execute_signal(signal=signal, quantity=1, current_price=Decimal("122.00"))
+
+    assert MockTradingClient.return_value.submit_order.called
+    call_args = MockTradingClient.return_value.submit_order.call_args[0][0]
+    # Options orders use the contract symbol, not the underlying
+    assert call_args.symbol == "AMD240119P00120000"
+
+
+@pytest.mark.asyncio
+@patch("broker.client.TradingClient")
+@patch("broker.client.OptionHistoricalDataClient")
+async def test_executor_skips_zero_quantity(MockDataClient, MockTradingClient, tmp_path):
+    """Zero quantity signals are skipped without submitting."""
+    from broker.client import BrokerClient
+    from database.migrations import init_db
+    broker = BrokerClient()
+    builder = OrderBuilder()
+    init_db(str(tmp_path / "test.db"))
+    executor = Executor(broker, builder, db_path=str(tmp_path / "test.db"))
+
+    signal = _make_signal("SELL_PUT")
+    result = await executor.execute_signal(signal=signal, quantity=0)
+
+    assert result is None
+    assert not MockTradingClient.return_value.submit_order.called
