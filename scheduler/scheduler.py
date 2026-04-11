@@ -6,7 +6,9 @@ Uses APScheduler for time-based jobs and asyncio for the real-time event loop.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
+from pathlib import Path
 
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -27,6 +29,7 @@ from portfolio.portfolio import Portfolio
 from risk.position_sizer import PositionSizer
 from risk.risk_manager import RiskManager
 from strategies.base import Strategy
+from strategies.wheel.wheel_strategy import WheelStrategy
 
 
 class TradingScheduler:
@@ -62,6 +65,9 @@ class TradingScheduler:
         self._active_symbols: list[str] = list(
             {sym for s in strategies for sym in s.symbols}
         )
+        self._wheel_strategies: list[WheelStrategy] = [
+            s for s in strategies if isinstance(s, WheelStrategy)
+        ]
 
     def setup(self) -> None:
         """Register all scheduled jobs."""
@@ -88,6 +94,13 @@ class TradingScheduler:
             self._check_options_positions,
             IntervalTrigger(minutes=cfg.options_check_interval_minutes),
             id="options_check",
+        )
+
+        # Options chain refresh every 15 minutes
+        self._scheduler.add_job(
+            self._refresh_options_chains,
+            IntervalTrigger(minutes=15),
+            id="options_chain_refresh",
         )
 
         # DTE warning check at 10 AM
@@ -181,10 +194,30 @@ class TradingScheduler:
         # this job is a safety net to trigger check signals manually if needed.
 
     async def _check_dte_warnings(self) -> None:
+        """Log structured warnings for positions approaching roll threshold."""
         if not self._is_market_open():
             return
-        logger.info("DTE warning check")
-        # Phase 5 will add roll logic here
+        for wheel in self._wheel_strategies:
+            state = wheel.get_state()
+            for symbol, data in state.items():
+                wheel_state = data.get("state")
+                if wheel_state not in ("csp_open", "cc_open"):
+                    continue
+                pos = wheel._positions.get(symbol)
+                if not pos:
+                    continue
+                contract = None
+                if pos.csp_position:
+                    contract = pos.csp_position.contract
+                elif pos.cc_position:
+                    contract = pos.cc_position.contract
+                if contract:
+                    threshold = 7
+                    if contract.dte <= threshold + 3:
+                        logger.warning(
+                            f"[DTE] {symbol} {wheel_state}: DTE={contract.dte} "
+                            f"approaching roll threshold={threshold}"
+                        )
 
     async def _pre_close(self) -> None:
         if not self._is_market_open():
@@ -274,6 +307,40 @@ class TradingScheduler:
                 strategy.on_fill(fill)
             except Exception as e:
                 logger.error(f"Strategy {strategy.strategy_id} fill error: {e}")
+
+        self._save_strategy_state()
+
+    async def _refresh_options_chains(self) -> None:
+        """Fetch live options chain for each Wheel symbol and push to strategy."""
+        if not self._is_market_open():
+            return
+        for wheel in self._wheel_strategies:
+            for symbol in wheel.symbols:
+                try:
+                    chain = self._broker.get_options_chain(
+                        symbol=symbol,
+                        dte_min=21,
+                        dte_max=45,
+                        option_type="both",
+                    )
+                    wheel.update_options_chain(symbol, chain)
+                    logger.debug(f"[Scheduler] Chain refreshed: {symbol} ({len(chain)} contracts)")
+                except Exception as e:
+                    logger.warning(f"[Scheduler] Chain refresh failed for {symbol}: {e}")
+
+    def _save_strategy_state(self) -> None:
+        """Persist all strategy states to data/strategy_state.json for the dashboard."""
+        state: dict = {}
+        for strategy in self._strategies:
+            try:
+                state[strategy.strategy_id] = strategy.get_state()
+            except Exception as e:
+                logger.warning(f"Could not save state for {strategy.strategy_id}: {e}")
+        path = Path(settings.system.db_path).parent / "strategy_state.json"
+        try:
+            path.write_text(json.dumps(state, default=str))
+        except Exception as e:
+            logger.warning(f"Could not write strategy_state.json: {e}")
 
     # ------------------------------------------------------------------
     # Helpers
