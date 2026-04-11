@@ -10,8 +10,8 @@ import json
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -42,31 +42,39 @@ async def index():
 
 @app.get("/api/account")
 async def get_account():
-    acct = _get_broker().get_account()
-    return {
-        "cash": float(acct.cash),
-        "equity": float(acct.equity),
-        "buying_power": float(acct.buying_power),
-        "portfolio_value": float(acct.portfolio_value),
-        "mode": MODE,
-    }
+    try:
+        acct = _get_broker().get_account()
+        return {
+            "cash": float(acct.cash),
+            "equity": float(acct.equity),
+            "buying_power": float(acct.buying_power),
+            "portfolio_value": float(acct.portfolio_value),
+            "mode": MODE,
+        }
+    except Exception as e:
+        logger.warning(f"[Dashboard] /api/account broker error: {e}")
+        raise HTTPException(status_code=503, detail="Broker unavailable")
 
 
 @app.get("/api/positions")
 async def get_positions():
-    return [
-        {
-            "symbol": p.symbol,
-            "side": p.side,
-            "quantity": p.quantity,
-            "avg_entry_price": float(p.avg_entry_price),
-            "current_price": float(p.current_price),
-            "market_value": float(p.market_value),
-            "unrealized_pnl": float(p.unrealized_pnl),
-            "unrealized_pnl_pct": float(p.unrealized_pnl_pct),
-        }
-        for p in _get_broker().get_positions()
-    ]
+    try:
+        return [
+            {
+                "symbol": p.symbol,
+                "side": p.side,
+                "quantity": p.quantity,
+                "avg_entry_price": float(p.avg_entry_price),
+                "current_price": float(p.current_price),
+                "market_value": float(p.market_value),
+                "unrealized_pnl": float(p.unrealized_pnl),
+                "unrealized_pnl_pct": float(p.unrealized_pnl_pct),
+            }
+            for p in _get_broker().get_positions()
+        ]
+    except Exception as e:
+        logger.warning(f"[Dashboard] /api/positions broker error: {e}")
+        raise HTTPException(status_code=503, detail="Broker unavailable")
 
 
 @app.get("/api/strategy-state")
@@ -124,17 +132,13 @@ async def get_performance():
     peak = 0.0
     max_dd = 0.0
     equity_curve = []
-    sells = 0
-    buys = 0
 
     for t in trades:
         notional = float(t.fill_price) * int(t.quantity) * (100 if t.is_options else 1)
         if t.side == "sell":
             equity += notional
-            sells += 1
         else:
             equity -= notional
-            buys += 1
         equity -= float(t.commission) if t.commission else 0.0
 
         if equity > peak:
@@ -143,14 +147,20 @@ async def get_performance():
         max_dd = max(max_dd, drawdown)
         equity_curve.append({"ts": str(t.filled_at), "equity": round(equity, 2)})
 
-    total_trades = sells + buys
-    win_rate = sells / total_trades if total_trades > 0 else 0.0
+    # Win rate: fraction of equity-curve ticks where cumulative P&L was positive.
+    positive_ticks = sum(1 for ec in equity_curve if ec["equity"] > 0)
+    win_rate = positive_ticks / len(equity_curve) if equity_curve else 0.0
+
+    try:
+        starting_equity = float(settings.system.starting_equity)
+    except AttributeError:
+        starting_equity = 20000.0
 
     return {
         "win_rate": round(win_rate, 4),
-        "total_return_pct": round(equity / 20000.0, 4),
+        "total_return_pct": round(equity / starting_equity, 4) if starting_equity > 0 else 0.0,
         "max_drawdown_pct": round(max_dd, 4),
-        "trade_count": total_trades,
+        "trade_count": len(trades),
         "equity_curve": equity_curve[-200:],
     }
 
