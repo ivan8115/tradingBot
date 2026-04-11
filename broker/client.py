@@ -228,6 +228,51 @@ class BrokerClient:
         logger.info(f"[Options] {symbol}: {len(result)} contracts fetched (DTE {dte_min}-{dte_max})")
         return result
 
+    def submit_options_order(
+        self,
+        contract_symbol: str,
+        qty: int,
+        side: str,
+        order_type: str = "limit",
+        limit_price: Decimal | None = None,
+        time_in_force: str = "day",
+    ) -> str:
+        """Submit an options order. Returns Alpaca order ID."""
+        order_side = OrderSide.BUY if side == "buy" else OrderSide.SELL
+
+        try:
+            if order_type == "limit" and limit_price is not None:
+                request = LimitOrderRequest(
+                    symbol=contract_symbol,
+                    qty=qty,
+                    side=order_side,
+                    time_in_force=TimeInForce.DAY,
+                    limit_price=float(limit_price),
+                )
+            else:
+                request = MarketOrderRequest(
+                    symbol=contract_symbol,
+                    qty=qty,
+                    side=order_side,
+                    time_in_force=TimeInForce.DAY,
+                )
+
+            logger.info(
+                f"[Options] Submitting {order_type} {side} {qty}x {contract_symbol} "
+                f"@ {limit_price or 'market'}"
+            )
+            order = self._client.submit_order(request)
+            logger.info(f"[Options] Order submitted: {order.id}")
+            return str(order.id)
+
+        except Exception as e:
+            msg = str(e).lower()
+            if "insufficient" in msg or "buying power" in msg:
+                raise InsufficientFundsError(
+                    f"Insufficient funds for options order {contract_symbol}"
+                ) from e
+            raise OrderError(f"Options order failed for {contract_symbol}: {e}") from e
+
     # ------------------------------------------------------------------
     # Orders
     # ------------------------------------------------------------------
