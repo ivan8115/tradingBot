@@ -133,3 +133,42 @@ class TestRiskManagerRegime:
         )
         result = rm.validate_signal(signal, portfolio, current_price=Decimal("150.00"))
         assert result.approved
+
+    def test_regime_blocks_entry_short_in_bearish(self):
+        from core.events import SignalEvent
+        from portfolio.portfolio import Portfolio
+        from risk.risk_manager import RiskManager
+
+        rm = RiskManager()
+        rm.set_regime(Regime.BEARISH)
+        portfolio = Portfolio(cash=Decimal("100000"))
+        signal = SignalEvent(
+            strategy_id="momentum",
+            symbol="AAPL",
+            signal_type="ENTRY_SHORT",
+            strength=0.8,
+            timestamp=datetime.now(timezone.utc),
+            metadata={"atr": 2.0, "close": 150.0},
+        )
+        result = rm.validate_signal(signal, portfolio, current_price=Decimal("150.00"))
+        assert not result.approved
+        assert any("BEARISH" in c.reason for c in result.checks if not c.passed)
+
+    def test_regime_blocks_sell_call_in_bearish(self):
+        from core.events import SignalEvent
+        from portfolio.portfolio import Portfolio
+        from risk.risk_manager import RiskManager
+
+        rm = RiskManager()
+        rm.set_regime(Regime.BEARISH)
+        portfolio = Portfolio(cash=Decimal("100000"))
+        signal = SignalEvent(
+            strategy_id="wheel",
+            symbol="AMD",
+            signal_type="SELL_CALL",
+            strength=1.0,
+            timestamp=datetime.now(timezone.utc),
+            metadata={"delta": 0.28},
+        )
+        result = rm.validate_signal(signal, portfolio)
+        assert not result.approved
