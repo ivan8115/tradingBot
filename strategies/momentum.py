@@ -22,9 +22,11 @@ from loguru import logger
 from analysis.indicators import (
     is_ema_bearish_cross,
     is_ema_bullish_cross,
+    is_happy_panda,
     is_macd_bearish_cross,
     is_macd_bullish_cross,
     is_rsi_overbought,
+    is_sad_panda,
 )
 from core.config import MomentumStrategyConfig, settings
 from core.events import BarEvent, FillEvent, SignalEvent
@@ -60,6 +62,7 @@ class MomentumStrategy(Strategy):
 
         # Track open positions per symbol (True = long)
         self._in_position: dict[str, bool] = {sym: False for sym in symbols}
+        self._ema_bearish_bars: dict[str, int] = {sym: 0 for sym in symbols}
 
         # Minimum bars before we start generating signals (needs enough for all indicators)
         self._min_bars = max(cfg.macd_slow + cfg.macd_signal + 5, cfg.ema_long + 5)
@@ -69,6 +72,13 @@ class MomentumStrategy(Strategy):
             return []
 
         snap = self._update_indicators(bar)
+
+        # Track consecutive bars where 9 EMA is below 20 EMA (used for Happy Panda)
+        if snap.ema_trend_up is False:
+            self._ema_bearish_bars[bar.symbol] = self._ema_bearish_bars.get(bar.symbol, 0) + 1
+        elif snap.ema_trend_up is True:
+            self._ema_bearish_bars[bar.symbol] = 0
+
         prev = self._get_prev_snapshot(bar.symbol)
 
         if not self._bars_available(bar.symbol, self._min_bars) or prev is None:
@@ -109,6 +119,36 @@ class MomentumStrategy(Strategy):
                         "take_profit": float(bar.close) + snap.atr * 4.0,
                     },
                 ))
+
+            # Happy Panda: EMA crossback after ≥3 consecutive bearish-EMA bars
+            elif (
+                is_happy_panda(snap, prev)
+                and self._ema_bearish_bars.get(sym, 0) >= 3
+                and rsi_ok
+            ):
+                strength = self._compute_entry_strength(snap) * 0.8
+                logger.info(
+                    f"[Momentum] HAPPY PANDA {sym} | "
+                    f"bearish_bars={self._ema_bearish_bars[sym]} "
+                    f"RSI={snap.rsi:.1f} strength={strength:.2f}"
+                )
+                signals.append(SignalEvent(
+                    strategy_id=self.strategy_id,
+                    symbol=sym,
+                    signal_type="ENTRY_LONG",
+                    strength=strength,
+                    timestamp=bar.timestamp,
+                    metadata={
+                        "pattern": "happy_panda",
+                        "rsi": snap.rsi,
+                        "ema_short": snap.ema_short,
+                        "ema_long": snap.ema_long,
+                        "close": float(bar.close),
+                        "atr": snap.atr,
+                        "stop_loss": float(bar.close) - snap.atr * 2.0,
+                        "take_profit": float(bar.close) + snap.atr * 4.0,
+                    },
+                ))
         else:
             # --- Exit conditions ---
             ema_cross_down = is_ema_bearish_cross(snap, prev)
@@ -133,6 +173,25 @@ class MomentumStrategy(Strategy):
                     timestamp=bar.timestamp,
                     metadata={
                         "reason": reason,
+                        "rsi": snap.rsi,
+                        "close": float(bar.close),
+                    },
+                ))
+
+            # Sad Panda: 9 EMA crossed back below 20 EMA (rally failed — early exit)
+            elif is_sad_panda(snap, prev):
+                logger.info(
+                    f"[Momentum] SAD PANDA (early exit) {sym} | RSI={snap.rsi:.1f}"
+                )
+                signals.append(SignalEvent(
+                    strategy_id=self.strategy_id,
+                    symbol=sym,
+                    signal_type="EXIT_LONG",
+                    strength=1.0,
+                    timestamp=bar.timestamp,
+                    metadata={
+                        "reason": "EMA crossback (sad panda)",
+                        "pattern": "sad_panda",
                         "rsi": snap.rsi,
                         "close": float(bar.close),
                     },

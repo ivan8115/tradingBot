@@ -270,3 +270,23 @@ def stop_loss_price(entry: float, atr: float, multiplier: float = 2.0, side: str
     if side == "long":
         return entry - (atr * multiplier)
     return entry + (atr * multiplier)
+
+
+def is_happy_panda(snap: IndicatorSnapshot, prev_snap: IndicatorSnapshot | None) -> bool:
+    """
+    Bullish EMA crossback: 9 EMA was below 20 EMA and has now crossed back above.
+    This is a bounce/continuation entry — 9 EMA recovers from a pullback.
+    """
+    if prev_snap is None or snap.ema_trend_up is None or prev_snap.ema_trend_up is None:
+        return False
+    return not prev_snap.ema_trend_up and snap.ema_trend_up
+
+
+def is_sad_panda(snap: IndicatorSnapshot, prev_snap: IndicatorSnapshot | None) -> bool:
+    """
+    Bearish EMA crossback: 9 EMA was above 20 EMA and has now crossed back below.
+    Use as an early exit signal — the rally failed.
+    """
+    if prev_snap is None or snap.ema_trend_up is None or prev_snap.ema_trend_up is None:
+        return False
+    return prev_snap.ema_trend_up and not snap.ema_trend_up
