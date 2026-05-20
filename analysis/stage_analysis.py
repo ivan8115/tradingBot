@@ -47,7 +47,7 @@ def classify_stage(df: pd.DataFrame) -> Stage:
     last_sma200 = float(sma200.iloc[-1])
     prev_sma200 = float(sma200.iloc[-2])
 
-    if any(math.isnan(v) for v in [last_sma150, last_sma200, prev_sma200]):
+    if any(math.isnan(v) for v in [last_close, last_sma150, last_sma200, prev_sma200]):
         return Stage.UNKNOWN
 
     sma200_rising = last_sma200 > prev_sma200
@@ -68,4 +68,5 @@ def classify_stage(df: pd.DataFrame) -> Stage:
     if last_close > last_sma200:
         return Stage.STAGE_1
 
-    return Stage.STAGE_4
+    # price < SMA200 but SMA200 still rising — ambiguous transition, not yet Stage 4
+    return Stage.UNKNOWN
