@@ -189,9 +189,6 @@ class RiskManager:
         self, signal: SignalEvent, current_price: Decimal | None
     ) -> RiskCheck:
         """Require minimum 2:1 R:R for equity entry signals."""
-        if signal.signal_type not in ("ENTRY_LONG", "ENTRY_SHORT"):
-            return RiskCheck(name="risk_reward", passed=True)
-
         stop_loss = signal.metadata.get("stop_loss")
         take_profit = signal.metadata.get("take_profit")
 
@@ -202,8 +199,12 @@ class RiskManager:
         if not entry:
             return RiskCheck(name="risk_reward", passed=True)
 
-        risk = entry - float(stop_loss)
-        reward = float(take_profit) - entry
+        if signal.signal_type == "ENTRY_SHORT":
+            risk = float(stop_loss) - entry
+            reward = entry - float(take_profit)
+        else:
+            risk = entry - float(stop_loss)
+            reward = float(take_profit) - entry
 
         if risk <= 0:
             return RiskCheck(name="risk_reward", passed=True)

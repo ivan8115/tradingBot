@@ -71,3 +71,22 @@ class TestRiskRewardGate:
         )
         result = self.rm.validate_signal(signal, self.portfolio)
         assert result.approved
+
+    def test_rejects_entry_short_when_rr_below_2(self):
+        # Short entry at 150: stop=152 (risk=2), target=148 (reward=2) → R:R = 1.0
+        signal = SignalEvent(
+            strategy_id="momentum",
+            symbol="AAPL",
+            signal_type="ENTRY_SHORT",
+            strength=0.8,
+            timestamp=datetime.now(timezone.utc),
+            metadata={
+                "atr": 2.0,
+                "close": 150.0,
+                "stop_loss": 152.0,   # stop ABOVE entry for short
+                "take_profit": 148.0,  # target BELOW entry for short
+            },
+        )
+        result = self.rm.validate_signal(signal, self.portfolio, Decimal("150.00"))
+        assert not result.approved
+        assert any("R:R" in c.reason for c in result.checks if not c.passed)
