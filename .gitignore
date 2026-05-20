@@ -12,8 +12,10 @@ __pycache__/
 dist/
 build/
 
-# Database
-data/
+# Database / runtime data (keep Python source files in data/ tracked)
+data/*.db
+data/*.sqlite3
+data/*.json
 *.db
 *.sqlite3
 
