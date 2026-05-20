@@ -12,6 +12,7 @@ from loguru import logger
 
 from core.config import settings
 from core.events import SignalEvent
+from data.market_regime import Regime
 from portfolio.portfolio import Portfolio
 
 
@@ -54,6 +55,7 @@ class RiskManager:
 
         self._daily_start_value: Decimal | None = None
         self._net_portfolio_delta: float = 0.0
+        self._regime: Regime = Regime.NEUTRAL
 
     def validate_signal(
         self,
@@ -74,6 +76,8 @@ class RiskManager:
         # Only check delta for options signals
         if signal.signal_type in ("SELL_PUT", "SELL_CALL", "BUY_TO_CLOSE_PUT", "BUY_TO_CLOSE_CALL"):
             checks.append(self._check_delta_exposure(signal))
+
+        checks.append(self._check_regime(signal))
 
         approved = all(c.passed for c in checks)
 
@@ -99,6 +103,11 @@ class RiskManager:
     def update_delta_exposure(self, delta_change: float) -> None:
         """Called by options positions to update net portfolio delta."""
         self._net_portfolio_delta += delta_change
+
+    def set_regime(self, regime: Regime) -> None:
+        """Update current market regime. Called by scheduler pre-market."""
+        self._regime = regime
+        logger.info(f"[RiskManager] Market regime set to: {regime.value}")
 
     # ------------------------------------------------------------------
     # Individual checks
@@ -172,3 +181,16 @@ class RiskManager:
                 ),
             )
         return RiskCheck(name="delta_exposure", passed=True)
+
+    def _check_regime(self, signal: SignalEvent) -> RiskCheck:
+        """Reject new entries when market regime is BEARISH."""
+        entry_types = ("ENTRY_LONG", "ENTRY_SHORT", "SELL_PUT", "SELL_CALL")
+        if signal.signal_type not in entry_types:
+            return RiskCheck(name="regime", passed=True)
+        if self._regime == Regime.BEARISH:
+            return RiskCheck(
+                name="regime",
+                passed=False,
+                reason=f"Market regime BEARISH: no new entries allowed",
+            )
+        return RiskCheck(name="regime", passed=True)
