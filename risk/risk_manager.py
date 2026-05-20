@@ -79,6 +79,9 @@ class RiskManager:
 
         checks.append(self._check_regime(signal))
 
+        if signal.signal_type in ("ENTRY_LONG", "ENTRY_SHORT"):
+            checks.append(self._check_risk_reward(signal, current_price))
+
         approved = all(c.passed for c in checks)
 
         if not approved:
@@ -181,6 +184,38 @@ class RiskManager:
                 ),
             )
         return RiskCheck(name="delta_exposure", passed=True)
+
+    def _check_risk_reward(
+        self, signal: SignalEvent, current_price: Decimal | None
+    ) -> RiskCheck:
+        """Require minimum 2:1 R:R for equity entry signals."""
+        if signal.signal_type not in ("ENTRY_LONG", "ENTRY_SHORT"):
+            return RiskCheck(name="risk_reward", passed=True)
+
+        stop_loss = signal.metadata.get("stop_loss")
+        take_profit = signal.metadata.get("take_profit")
+
+        if stop_loss is None or take_profit is None:
+            return RiskCheck(name="risk_reward", passed=True)
+
+        entry = float(current_price) if current_price else signal.metadata.get("close", 0.0)
+        if not entry:
+            return RiskCheck(name="risk_reward", passed=True)
+
+        risk = entry - float(stop_loss)
+        reward = float(take_profit) - entry
+
+        if risk <= 0:
+            return RiskCheck(name="risk_reward", passed=True)
+
+        rr = reward / risk
+        if rr < 2.0:
+            return RiskCheck(
+                name="risk_reward",
+                passed=False,
+                reason=f"R:R {rr:.2f}x below minimum 2.0x (reward={reward:.2f}, risk={risk:.2f})",
+            )
+        return RiskCheck(name="risk_reward", passed=True)
 
     def _check_regime(self, signal: SignalEvent) -> RiskCheck:
         """Reject new entries when market regime is BEARISH."""

@@ -105,6 +105,8 @@ class MomentumStrategy(Strategy):
                         "ema_long": snap.ema_long,
                         "close": float(bar.close),
                         "atr": snap.atr,
+                        "stop_loss": float(bar.close) - snap.atr * 2.0,
+                        "take_profit": float(bar.close) + snap.atr * 4.0,
                     },
                 ))
         else:
