@@ -30,7 +30,8 @@ def is_power_earnings_gap(
     A PEG is a gap-up ≥ min_gap_pct from prior close with volume ≥ min_volume_ratio
     times the recent average. Only bullish gaps (current_open > prior_close) qualify.
     """
-    if prior_close <= 0 or avg_volume <= 0:
+    import math
+    if prior_close <= 0 or avg_volume <= 0 or not math.isfinite(avg_volume):
         return False
 
     gap_pct = (current_open - prior_close) / prior_close
@@ -91,7 +92,7 @@ class PEGDetector:
                         break
 
             except Exception as e:
-                logger.debug(f"[PEG] {symbol} scan failed: {e}")
+                logger.warning(f"[PEG] {symbol} scan failed: {e}")
                 continue
 
         return peg_symbols
