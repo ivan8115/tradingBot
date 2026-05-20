@@ -276,6 +276,10 @@ def is_happy_panda(snap: IndicatorSnapshot, prev_snap: IndicatorSnapshot | None)
     """
     Bullish EMA crossback: 9 EMA was below 20 EMA and has now crossed back above.
     This is a bounce/continuation entry — 9 EMA recovers from a pullback.
+
+    Cannot alias is_ema_bullish_cross: this function accepts prev_snap=None
+    (callers pass None before enough bars exist), while is_ema_bullish_cross
+    requires a non-None IndicatorSnapshot and would raise AttributeError.
     """
     if prev_snap is None or snap.ema_trend_up is None or prev_snap.ema_trend_up is None:
         return False
@@ -286,6 +290,9 @@ def is_sad_panda(snap: IndicatorSnapshot, prev_snap: IndicatorSnapshot | None) -
     """
     Bearish EMA crossback: 9 EMA was above 20 EMA and has now crossed back below.
     Use as an early exit signal — the rally failed.
+
+    Cannot alias is_ema_bearish_cross: same reason as is_happy_panda — this
+    function accepts prev_snap=None; is_ema_bearish_cross does not.
     """
     if prev_snap is None or snap.ema_trend_up is None or prev_snap.ema_trend_up is None:
         return False

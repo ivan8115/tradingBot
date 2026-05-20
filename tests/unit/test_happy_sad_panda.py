@@ -3,8 +3,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-import pytest
-
 from analysis.indicators import IndicatorSnapshot, is_happy_panda, is_sad_panda
 from core.events import BarEvent
 

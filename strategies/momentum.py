@@ -211,10 +211,14 @@ class MomentumStrategy(Strategy):
             logger.info(f"[Momentum] Position closed: {sym} @ ${fill.fill_price}")
 
     def get_state(self) -> dict:
-        return {"in_position": self._in_position.copy()}
+        return {
+            "in_position": self._in_position.copy(),
+            "ema_bearish_bars": self._ema_bearish_bars.copy(),
+        }
 
     def load_state(self, state: dict) -> None:
         self._in_position.update(state.get("in_position", {}))
+        self._ema_bearish_bars.update(state.get("ema_bearish_bars", {}))
 
     def _compute_entry_strength(self, snap) -> float:
         """
