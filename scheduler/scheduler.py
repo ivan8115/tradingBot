@@ -22,7 +22,7 @@ from broker.portfolio import PortfolioTracker
 from core.config import settings
 from core.events import BarEvent, FillEvent
 from data.historical import HistoricalDataFetcher
-from data.market_regime import MarketRegimeFilter, Regime
+from data.market_regime import MarketRegimeFilter
 from execution.executor import Executor
 from execution.order_builder import OrderBuilder
 from monitoring.alerting import alerter
@@ -61,7 +61,6 @@ class TradingScheduler:
         self._executor = Executor(broker, self._order_builder, settings.system.db_path)
         self._fetcher = HistoricalDataFetcher()
         self._regime_filter = MarketRegimeFilter()
-        self._regime: Regime = Regime.NEUTRAL
 
         self._scheduler = AsyncIOScheduler(timezone=settings.system.timezone)
         self._tz = pytz.timezone(settings.system.timezone)
@@ -176,9 +175,9 @@ class TradingScheduler:
             spy_df = self._fetcher.fetch_recent_bars("SPY", days=60, timeframe="1Day")
             qqq_df = self._fetcher.fetch_recent_bars("QQQ", days=60, timeframe="1Day")
             if not spy_df.empty and not qqq_df.empty:
-                self._regime = self._regime_filter.get_regime(spy_df, qqq_df)
-                self._risk.set_regime(self._regime)
-                logger.info(f"Market regime: {self._regime.value.upper()}")
+                regime = self._regime_filter.get_regime(spy_df, qqq_df)
+                self._risk.set_regime(regime)
+                logger.info(f"Market regime: {regime.value.upper()}")
         except Exception as e:
             logger.warning(f"Regime check failed, defaulting to NEUTRAL: {e}")
 

@@ -54,6 +54,9 @@ class MarketRegimeFilter:
         if ema9 is None or ema20 is None or len(ema9) < 2:
             return 0
 
+        if pd.isna(ema9.iloc[-1]) or pd.isna(ema20.iloc[-1]):
+            return 0
+
         last_ema9 = float(ema9.iloc[-1])
         prev_ema9 = float(ema9.iloc[-2])
         last_ema20 = float(ema20.iloc[-1])

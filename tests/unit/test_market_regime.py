@@ -6,7 +6,10 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
+from core.events import SignalEvent
 from data.market_regime import MarketRegimeFilter, Regime
+from portfolio.portfolio import Portfolio
+from risk.risk_manager import RiskManager
 
 
 def _make_df(closes: list[float]) -> pd.DataFrame:
@@ -58,10 +61,6 @@ class TestMarketRegimeFilter:
 
 class TestRiskManagerRegime:
     def test_regime_blocks_entry_long_in_bearish(self):
-        from core.events import SignalEvent
-        from portfolio.portfolio import Portfolio
-        from risk.risk_manager import RiskManager
-
         rm = RiskManager()
         rm.set_regime(Regime.BEARISH)
         portfolio = Portfolio(cash=Decimal("100000"))
@@ -78,10 +77,6 @@ class TestRiskManagerRegime:
         assert any("BEARISH" in c.reason for c in result.checks if not c.passed)
 
     def test_regime_blocks_sell_put_in_bearish(self):
-        from core.events import SignalEvent
-        from portfolio.portfolio import Portfolio
-        from risk.risk_manager import RiskManager
-
         rm = RiskManager()
         rm.set_regime(Regime.BEARISH)
         portfolio = Portfolio(cash=Decimal("100000"))
@@ -97,10 +92,6 @@ class TestRiskManagerRegime:
         assert not result.approved
 
     def test_regime_allows_exit_in_bearish(self):
-        from core.events import SignalEvent
-        from portfolio.portfolio import Portfolio
-        from risk.risk_manager import RiskManager
-
         rm = RiskManager()
         rm.set_regime(Regime.BEARISH)
         portfolio = Portfolio(cash=Decimal("100000"))
@@ -116,10 +107,6 @@ class TestRiskManagerRegime:
         assert result.approved
 
     def test_regime_allows_entry_in_bullish(self):
-        from core.events import SignalEvent
-        from portfolio.portfolio import Portfolio
-        from risk.risk_manager import RiskManager
-
         rm = RiskManager()
         rm.set_regime(Regime.BULLISH)
         portfolio = Portfolio(cash=Decimal("100000"))
@@ -135,10 +122,6 @@ class TestRiskManagerRegime:
         assert result.approved
 
     def test_regime_blocks_entry_short_in_bearish(self):
-        from core.events import SignalEvent
-        from portfolio.portfolio import Portfolio
-        from risk.risk_manager import RiskManager
-
         rm = RiskManager()
         rm.set_regime(Regime.BEARISH)
         portfolio = Portfolio(cash=Decimal("100000"))
@@ -155,10 +138,6 @@ class TestRiskManagerRegime:
         assert any("BEARISH" in c.reason for c in result.checks if not c.passed)
 
     def test_regime_blocks_sell_call_in_bearish(self):
-        from core.events import SignalEvent
-        from portfolio.portfolio import Portfolio
-        from risk.risk_manager import RiskManager
-
         rm = RiskManager()
         rm.set_regime(Regime.BEARISH)
         portfolio = Portfolio(cash=Decimal("100000"))
