@@ -338,6 +338,39 @@ class WheelStrategy(Strategy):
         if symbol in self._positions:
             self._positions[symbol].cached_chain = chain
 
+    def sync_symbols(self, new_symbols: list[str]) -> None:
+        """
+        Update the active symbol list from a fresh watchlist scan.
+
+        Rules:
+        - New symbols are added in SCANNING state.
+        - SCANNING symbols not in new_symbols are removed.
+        - Symbols with open positions (CSP_OPEN, ASSIGNED, CC_OPEN) are never removed.
+        """
+        from collections import deque
+        window_size = next(
+            (w.maxlen for w in self._bar_windows.values() if w.maxlen),
+            settings.indicators.bar_window_size,
+        )
+
+        for sym in new_symbols:
+            if sym not in self._positions:
+                self._positions[sym] = WheelPosition(symbol=sym)
+                self._bar_windows[sym] = deque(maxlen=window_size)
+                logger.info(f"[Wheel] Added new symbol from watchlist: {sym}")
+
+        to_remove = [
+            sym
+            for sym, pos in self._positions.items()
+            if sym not in new_symbols and pos.state == WheelState.SCANNING
+        ]
+        for sym in to_remove:
+            del self._positions[sym]
+            self._bar_windows.pop(sym, None)
+            logger.info(f"[Wheel] Removed idle symbol from watchlist: {sym}")
+
+        self.symbols = list(self._positions.keys())
+
     def get_state(self) -> dict:
         return {
             sym: {
