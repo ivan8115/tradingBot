@@ -18,7 +18,7 @@ from loguru import logger
 from broker.client import BrokerClient
 from core.config import settings
 from database.migrations import get_session_factory
-from database.models import Signal, Trade
+from database.models import Signal, Trade, WatchlistCandidate
 
 DB_PATH = settings.system.db_path
 STATE_PATH = str(Path(DB_PATH).parent / "strategy_state.json")
@@ -185,6 +185,32 @@ async def get_alerts():
             }
             for s in rejected
         ]
+
+
+@app.get("/api/watchlist")
+async def get_watchlist():
+    """Return today's Wheel candidates from the automated screener scan."""
+    from datetime import date
+    today = date.today().isoformat()
+    with get_session_factory(DB_PATH)() as session:
+        rows = (
+            session.query(WatchlistCandidate)
+            .filter_by(scan_date=today, active=True)
+            .order_by(WatchlistCandidate.final_score.desc())
+            .all()
+        )
+    return [
+        {
+            "symbol": r.symbol,
+            "price": r.price,
+            "iv_proxy": r.iv_proxy,
+            "options_volume": r.options_volume,
+            "quiverquant_score": r.quiverquant_score,
+            "final_score": round(r.final_score, 2),
+            "scan_date": r.scan_date,
+        }
+        for r in rows
+    ]
 
 
 @app.websocket("/ws")
