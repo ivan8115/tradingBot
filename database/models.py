@@ -116,3 +116,21 @@ class PortfolioSnapshot(Base):
     cumulative_pnl: Mapped[Decimal] = mapped_column(Numeric(14, 4))
     open_positions: Mapped[int] = mapped_column(Integer)
     recorded_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class WatchlistCandidate(Base):
+    """Daily Wheel candidate from automated screener scan."""
+
+    __tablename__ = "watchlist_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    scan_date: Mapped[str] = mapped_column(String(16), index=True)   # YYYY-MM-DD
+    price: Mapped[float] = mapped_column(Float)
+    iv_proxy: Mapped[float] = mapped_column(Float)                    # Finviz volatility %
+    options_volume: Mapped[int] = mapped_column(Integer)
+    quiverquant_score: Mapped[float] = mapped_column(Float, default=0.0)
+    final_score: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(32), default="finviz")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime)
