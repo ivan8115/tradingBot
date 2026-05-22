@@ -118,6 +118,16 @@ class SchedulerConfig(BaseModel):
     pre_close_buffer_minutes: int = 15
 
 
+class WatchlistConfig(BaseModel):
+    max_symbols: int = 15           # max Wheel candidates per day
+    min_price: float = 10.0        # stock price floor
+    max_price: float = 50.0        # stock price ceiling (100 shares = $5K max collateral for small accounts)
+    min_options_volume: int = 200  # minimum daily options volume
+    quiverquant_boost: bool = True  # weight candidates with recent congressional buys
+    refresh_hour: int = 8          # pre-market scan time (ET)
+    refresh_minute: int = 30
+
+
 class MonitoringConfig(BaseModel):
     slack_alerts: bool = False
     email_alerts: bool = False
@@ -158,6 +168,7 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_pass: str = ""
     alert_email_to: str = ""
+    quiverquant_api_key: str = ""
 
     # From config.yaml — populated by load()
     system: SystemConfig = Field(default_factory=SystemConfig)
@@ -168,6 +179,7 @@ class Settings(BaseSettings):
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
+    watchlist: WatchlistConfig = Field(default_factory=WatchlistConfig)
 
     @classmethod
     def load(cls, config_path: str = "config.yaml") -> "Settings":
