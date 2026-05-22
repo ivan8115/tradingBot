@@ -23,6 +23,7 @@ from core.config import settings
 from core.events import BarEvent, FillEvent
 from data.historical import HistoricalDataFetcher
 from data.market_regime import MarketRegimeFilter
+from data.watchlist_provider import WatchlistProvider
 from execution.executor import Executor
 from execution.order_builder import OrderBuilder
 from monitoring.alerting import alerter
@@ -60,6 +61,7 @@ class TradingScheduler:
         self._order_builder = OrderBuilder()
         self._executor = Executor(broker, self._order_builder, settings.system.db_path)
         self._fetcher = HistoricalDataFetcher()
+        self._watchlist = WatchlistProvider()
         self._regime_filter = MarketRegimeFilter()
 
         self._scheduler = AsyncIOScheduler(timezone=settings.system.timezone)
@@ -82,6 +84,18 @@ class TradingScheduler:
             CronTrigger(hour=cfg.pre_market_hour, minute=cfg.pre_market_minute,
                         day_of_week="mon-fri", timezone=tz),
             id="pre_market",
+        )
+
+        # Watchlist refresh (pre-market, before trading starts)
+        self._scheduler.add_job(
+            self._refresh_watchlist,
+            CronTrigger(
+                hour=settings.watchlist.refresh_hour,
+                minute=settings.watchlist.refresh_minute,
+                day_of_week="mon-fri",
+                timezone=tz,
+            ),
+            id="watchlist_refresh",
         )
 
         # Market open
@@ -180,6 +194,31 @@ class TradingScheduler:
                 logger.info(f"Market regime: {regime.value.upper()}")
         except Exception as e:
             logger.warning(f"Regime check failed, defaulting to NEUTRAL: {e}")
+
+        # Trigger watchlist refresh
+        await self._refresh_watchlist()
+
+    async def _refresh_watchlist(self) -> None:
+        """Scan Finviz + QuiverQuant for today's Wheel candidates and sync strategies."""
+        if not self._is_trading_day():
+            return
+        logger.info("=== WATCHLIST REFRESH ===")
+        try:
+            loop = asyncio.get_event_loop()
+            symbols = await loop.run_in_executor(None, self._watchlist.refresh)
+            if not symbols:
+                logger.warning("[Watchlist] Refresh returned empty list — no symbol change")
+                return
+
+            for wheel in self._wheel_strategies:
+                wheel.sync_symbols(symbols)
+
+            self._active_symbols = list(
+                {sym for s in self._strategies for sym in s.symbols}
+            )
+            logger.info(f"[Watchlist] Active symbols updated: {self._active_symbols}")
+        except Exception as exc:
+            logger.error(f"[Watchlist] Refresh failed: {exc}")
 
     async def _on_market_open(self) -> None:
         if not self._is_market_open():
