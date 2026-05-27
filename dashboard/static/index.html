@@ -283,6 +283,32 @@
   </section>
 
   <section>
+    <div class="section-title">Wheel Metrics</div>
+    <div id="wheel-metrics-stats" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;">
+      <div class="stat-card">
+        <div class="stat-label">Premium This Month</div>
+        <div class="stat-value" id="stat-premium-month">&#8212;</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">CSP Win Rate</div>
+        <div class="stat-value" id="stat-csp-winrate">&#8212;</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Cycles Completed</div>
+        <div class="stat-value" id="stat-cycles-done">&#8212;</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Active Cycles</div>
+        <div class="stat-value" id="stat-cycles-active">&#8212;</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Current Drawdown</div>
+        <div class="stat-value" id="stat-wm-drawdown">&#8212;</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
     <div class="section-title">Performance</div>
     <div id="perf-stats">
       <div class="stat-card">
@@ -515,6 +541,24 @@
     wrap.appendChild(table);
   }
 
+  /* Load wheel metrics */
+  function loadWheelMetrics() {
+    fetch('/api/metrics')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        document.getElementById('stat-premium-month').textContent = fmt$(data.premium_this_month || 0);
+        document.getElementById('stat-cycles-done').textContent   = String(data.cycles_completed || 0);
+        document.getElementById('stat-cycles-active').textContent = String(data.cycles_active || 0);
+        document.getElementById('stat-wm-drawdown').textContent   = fmtPct(data.current_drawdown_pct || 0);
+
+        var wr  = Number(data.csp_win_rate || 0);
+        var wrEl = document.getElementById('stat-csp-winrate');
+        wrEl.textContent = fmtPct(wr);
+        wrEl.style.color = wr >= 0.60 ? 'var(--positive)' : wr >= 0.40 ? 'var(--amber)' : 'var(--negative)';
+      })
+      .catch(function(err) { console.warn('[Dashboard] /api/metrics error:', err); });
+  }
+
   /* Load performance stats + equity curve */
   function loadPerformance() {
     fetch('/api/performance')
@@ -637,6 +681,7 @@
 
   /* Init */
   connect();
+  loadWheelMetrics();
   loadPerformance();
   loadTrades();
 </script>

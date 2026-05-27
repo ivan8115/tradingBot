@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 
 import uvicorn
@@ -18,7 +19,7 @@ from loguru import logger
 from broker.client import BrokerClient
 from core.config import settings
 from database.migrations import get_session_factory
-from database.models import Signal, Trade, WatchlistCandidate
+from database.models import PortfolioSnapshot, Signal, Trade, WatchlistCandidate, WheelCycle
 
 DB_PATH = settings.system.db_path
 STATE_PATH = str(Path(DB_PATH).parent / "strategy_state.json")
@@ -185,6 +186,42 @@ async def get_alerts():
             }
             for s in rejected
         ]
+
+
+@app.get("/api/metrics")
+async def get_metrics():
+    with get_session_factory(DB_PATH)() as session:
+        now = datetime.utcnow()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        completed = session.query(WheelCycle).filter(WheelCycle.completed == True).all()  # noqa: E712
+        active = session.query(WheelCycle).filter(WheelCycle.completed == False).all()  # noqa: E712
+
+        premium_this_month = float(sum(
+            (c.total_premium_collected or 0)
+            for c in (completed + active)
+            if c.started_at and c.started_at >= month_start
+        ))
+
+        csp_wins = sum(1 for c in completed if c.stock_cost_basis is None)
+        csp_win_rate = csp_wins / len(completed) if completed else 0.0
+
+        snapshots = session.query(PortfolioSnapshot).all()
+        if snapshots:
+            peak = max(float(s.total_value) for s in snapshots)
+            latest = max(snapshots, key=lambda s: s.recorded_at)
+            current = float(latest.total_value)
+            current_drawdown_pct = (peak - current) / peak if peak > 0 else 0.0
+        else:
+            current_drawdown_pct = 0.0
+
+    return {
+        "premium_this_month": round(premium_this_month, 2),
+        "csp_win_rate": round(csp_win_rate, 4),
+        "cycles_completed": len(completed),
+        "cycles_active": len(active),
+        "current_drawdown_pct": round(current_drawdown_pct, 4),
+    }
 
 
 @app.get("/api/watchlist")
