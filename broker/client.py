@@ -222,7 +222,7 @@ class BrokerClient:
                 delta=delta,
                 iv=iv,
                 open_interest=int(raw.open_interest or 0),
-                volume=int(raw.volume or 0),
+                volume=int(getattr(raw, "volume", None) or 0),
             ))
 
         logger.info(f"[Options] {symbol}: {len(result)} contracts fetched (DTE {dte_min}-{dte_max})")

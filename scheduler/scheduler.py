@@ -16,11 +16,16 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
+from ai.trading_advisor import PreMarketBriefing, advisor as _advisor
+from ai.researcher import researcher as _researcher
 from broker.client import BrokerClient
 from broker.market_data import MarketDataStream
 from broker.portfolio import PortfolioTracker
 from core.config import settings
 from core.events import BarEvent, FillEvent
+from data.earnings_calendar import earnings_calendar as _earnings_calendar
+from database.migrations import get_session_factory
+from database.models import Signal, Trade
 from data.historical import HistoricalDataFetcher
 from data.market_regime import MarketRegimeFilter
 from data.watchlist_provider import WatchlistProvider
@@ -31,6 +36,7 @@ from portfolio.portfolio import Portfolio
 from risk.position_sizer import PositionSizer
 from risk.risk_manager import RiskManager
 from strategies.base import Strategy
+from strategies.swing.swing_strategy import SwingStrategy
 from strategies.wheel.wheel_strategy import WheelStrategy
 
 
@@ -71,6 +77,16 @@ class TradingScheduler:
         )
         self._wheel_strategies: list[WheelStrategy] = [
             s for s in strategies if isinstance(s, WheelStrategy)
+        ]
+
+        self._advisor = _advisor
+        self._researcher = _researcher
+        self._earnings_calendar = _earnings_calendar
+        self._briefing: PreMarketBriefing | None = None
+        self._briefing_posture: str = "normal"
+        self._session_factory = get_session_factory(settings.system.db_path)
+        self._swing_strategies: list[SwingStrategy] = [
+            s for s in strategies if isinstance(s, SwingStrategy)
         ]
 
     def setup(self) -> None:
@@ -142,13 +158,33 @@ class TradingScheduler:
             id="market_close",
         )
 
+        # Friday weekly AI review (fires 5 min after market close)
+        self._scheduler.add_job(
+            self._weekly_review,
+            CronTrigger(hour=16, minute=5, day_of_week="fri", timezone=tz),
+            id="weekly_review",
+        )
+
+        # Midday thesis check at 12:00 PM ET
+        self._scheduler.add_job(
+            self._midday_thesis_check,
+            CronTrigger(hour=12, minute=0, day_of_week="mon-fri", timezone=tz),
+            id="midday_thesis",
+        )
+
         logger.info("TradingScheduler configured")
 
     async def run(self) -> None:
         """Start the scheduler and block until interrupted."""
         self.setup()
+        self._load_strategy_state()
         self._scheduler.start()
         logger.info("TradingScheduler started — waiting for market events")
+
+        if self._is_market_open():
+            logger.info("Market already open on startup — resuming mid-session")
+            await self._on_market_open()
+
         try:
             # Keep event loop alive
             while True:
@@ -195,6 +231,57 @@ class TradingScheduler:
         except Exception as e:
             logger.warning(f"Regime check failed, defaulting to NEUTRAL: {e}")
 
+        # Earnings calendar prefetch for all active symbols
+        try:
+            await self._earnings_calendar.prefetch(self._active_symbols)
+        except Exception as e:
+            logger.warning(f"[EarningsCalendar] prefetch failed: {e}")
+
+        # Perplexity research
+        research_context: dict = {}
+        market_themes: list[str] = []
+        if self._researcher._enabled:
+            try:
+                research_context = await self._researcher.research_symbols(self._active_symbols)
+                market_themes = await self._researcher.get_market_themes()
+                self._write_research_log(research_context, market_themes)
+            except Exception as e:
+                logger.warning(f"[Researcher] pre-market research failed: {e}")
+
+        # AI pre-market briefing
+        try:
+            acct = self._tracker
+            briefing = await self._advisor.pre_market_briefing(
+                account={
+                    "equity": float(acct.equity),
+                    "cash": float(acct.cash),
+                    "buying_power": float(getattr(acct, "buying_power", acct.cash)),
+                },
+                regime=self._risk._regime.value,
+                active_symbols=self._active_symbols,
+                open_positions=[
+                    {"symbol": s, "state": p.state.value}
+                    for wheel in self._wheel_strategies
+                    for s, p in wheel._positions.items()
+                ],
+                research_context=research_context,
+                earnings_context=dict(self._earnings_calendar._cache),
+                market_themes=market_themes,
+            )
+            if briefing is not None:
+                self._briefing = briefing
+                self._briefing_posture = briefing.risk_posture
+                from data.market_regime import Regime
+                regime_map = {"bullish": Regime.BULLISH, "bearish": Regime.BEARISH}
+                override = regime_map.get(briefing.suggested_regime.lower())
+                if override and override != self._risk._regime:
+                    logger.info(
+                        f"[AI] Overriding regime: {self._risk._regime.value} → {override.value}"
+                    )
+                    self._risk.set_regime(override)
+        except Exception as e:
+            logger.warning(f"[AI] Pre-market briefing error: {e}")
+
         # Trigger watchlist refresh
         await self._refresh_watchlist()
 
@@ -212,6 +299,9 @@ class TradingScheduler:
 
             for wheel in self._wheel_strategies:
                 wheel.sync_symbols(symbols)
+
+            for swing in self._swing_strategies:
+                swing.sync_symbols(symbols)
 
             self._active_symbols = list(
                 {sym for s in self._strategies for sym in s.symbols}
@@ -306,6 +396,23 @@ class TradingScheduler:
         )
         alerter.daily_summary_alert(summary)
 
+        # AI daily review
+        try:
+            trades_today = self._get_todays_trades()
+            signals_today = self._get_todays_signals()
+            review = await self._advisor.daily_review(trades_today, signals_today, summary)
+            if review is not None:
+                import json as _json
+                from pathlib import Path as _Path
+                reviews_dir = _Path(settings.system.db_path).parent / "reviews"
+                reviews_dir.mkdir(exist_ok=True)
+                review_path = reviews_dir / f"daily_{datetime.utcnow().date().isoformat()}.json"
+                review_path.write_text(_json.dumps(review.model_dump(), indent=2))
+                alerter.alert(f"Daily Review [{review.grade}]: {review.summary}")
+                logger.info(f"[AI] Daily review saved: {review_path}")
+        except Exception as e:
+            logger.warning(f"[AI] Daily review error: {e}")
+
     # ------------------------------------------------------------------
     # Event handlers (called by WebSocket stream)
     # ------------------------------------------------------------------
@@ -314,6 +421,62 @@ class TradingScheduler:
         from decimal import Decimal
         self._portfolio._current_prices = getattr(self._portfolio, '_current_prices', {})
         self._portfolio._current_prices[bar.symbol] = bar.close  # type: ignore[attr-defined]
+
+        # AI strike pre-selection for Wheel strategies in SCANNING state
+        if self._advisor._enabled:
+            from strategies.wheel.wheel_strategy import WheelState
+            for wheel in self._wheel_strategies:
+                if bar.symbol not in wheel._positions:
+                    continue
+                pos = wheel._positions[bar.symbol]
+                if pos.state != WheelState.SCANNING or not pos.cached_chain:
+                    continue
+                if pos.ai_preferred_contract_id:
+                    continue  # already pre-selected this bar cycle
+                try:
+                    from analysis.greeks import iv_rank as iv_rank_fn
+                    current_iv = wheel._estimate_iv(wheel._get_snapshot(bar.symbol), bar)
+                    iv_rank_val = iv_rank_fn(current_iv, pos.iv_history) if len(pos.iv_history) > 10 else 0.0
+                    if iv_rank_val >= wheel._cfg.csp.min_iv_rank:
+                        chain_dicts = [
+                            {
+                                "contract_id": c.contract_id,
+                                "strike": float(c.strike),
+                                "dte": c.dte,
+                                "delta": c.delta,
+                                "mid": float(c.mid),
+                                "bid": float(c.bid) if hasattr(c, "bid") else None,
+                                "ask": float(c.ask) if hasattr(c, "ask") else None,
+                                "volume": getattr(c, "volume", None),
+                                "open_interest": getattr(c, "open_interest", None),
+                            }
+                            for c in pos.cached_chain
+                        ]
+                        ai_strike = await self._advisor.select_csp_strike(
+                            symbol=bar.symbol,
+                            underlying_price=float(bar.close),
+                            iv_rank=iv_rank_val,
+                            chain=chain_dicts,
+                            account={
+                                "equity": float(self._tracker.equity),
+                                "cash": float(self._tracker.cash),
+                            },
+                        )
+                        if ai_strike is not None:
+                            pos.ai_preferred_contract_id = ai_strike.contract_id
+                except Exception as e:
+                    logger.warning(f"[AI] Strike pre-selection failed for {bar.symbol}: {e}")
+
+        market_context = {
+            "regime": self._risk._regime.value,
+            "drawdown_pct": float(self._portfolio.drawdown()),
+            "daily_pnl_pct": self._get_daily_pnl_pct(),
+            "risk_posture": self._briefing_posture,
+            "open_positions": [
+                {"symbol": sym, "side": pos.side, "qty": pos.quantity}
+                for sym, pos in self._portfolio.positions.items()
+            ],
+        }
 
         for strategy in self._strategies:
             if bar.symbol not in strategy.symbols:
@@ -325,6 +488,32 @@ class TradingScheduler:
                 continue
 
             for signal in signals:
+                # AI signal evaluation (fails open — passes to RiskManager if AI unavailable)
+                ai_approved = True
+                if self._advisor._enabled:
+                    try:
+                        eval_result = await self._advisor.evaluate_signal(signal, market_context)
+                        if eval_result is not None:
+                            if not eval_result.approved:
+                                signal.metadata["ai_rejected"] = True
+                                signal.metadata["ai_reasoning"] = eval_result.reasoning
+                                self._executor._save_signal(
+                                    signal,
+                                    approved=False,
+                                    rejection_reason=f"AI: {eval_result.reasoning[:255]}",
+                                )
+                                ai_approved = False
+                            else:
+                                signal.strength = eval_result.adjusted_strength
+                                signal.metadata["ai_approved"] = True
+                                signal.metadata["ai_reasoning"] = eval_result.reasoning
+                                signal.metadata["ai_confidence"] = eval_result.confidence
+                    except Exception as e:
+                        logger.warning(f"[AI] Signal eval error for {signal.symbol}: {e}")
+
+                if not ai_approved:
+                    continue
+
                 result = self._risk.validate_signal(signal, self._portfolio, bar.close)
                 if result.approved:
                     qty = self._sizer.size_position(
@@ -385,6 +574,163 @@ class TradingScheduler:
                     logger.debug(f"[Scheduler] Chain refreshed: {symbol} ({len(chain)} contracts)")
                 except Exception as e:
                     logger.warning(f"[Scheduler] Chain refresh failed for {symbol}: {e}")
+
+    async def _weekly_review(self) -> None:
+        """Friday EOD: run AI weekly review and save to disk."""
+        logger.info("=== WEEKLY AI REVIEW ===")
+        try:
+            from datetime import timedelta
+            import json as _json
+            from pathlib import Path as _Path
+            from database.models import PortfolioSnapshot, WheelCycle
+
+            today = datetime.utcnow().date()
+            week_start = today - timedelta(days=7)
+            with self._session_factory() as session:
+                completed = session.query(WheelCycle).filter(WheelCycle.completed == True).all()  # noqa: E712
+                active = session.query(WheelCycle).filter(WheelCycle.completed == False).all()  # noqa: E712
+                month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                premium_this_month = float(sum(
+                    (c.total_premium_collected or 0)
+                    for c in (completed + active)
+                    if c.started_at and c.started_at >= month_start
+                ))
+                csp_wins = sum(1 for c in completed if c.stock_cost_basis is None)
+                csp_win_rate = csp_wins / len(completed) if completed else 0.0
+                snapshots = session.query(PortfolioSnapshot).all()
+                if snapshots:
+                    peak = max(float(s.total_value) for s in snapshots)
+                    latest = max(snapshots, key=lambda s: s.recorded_at)
+                    current_drawdown = (peak - float(latest.total_value)) / peak if peak > 0 else 0.0
+                else:
+                    current_drawdown = 0.0
+
+                trades_this_week = [
+                    {"symbol": t.symbol, "side": t.side, "fill_price": float(t.fill_price),
+                     "quantity": t.quantity, "filled_at": str(t.filled_at)}
+                    for t in session.query(Trade).all()
+                    if t.filled_at and t.filled_at.date() >= week_start
+                ]
+
+            metrics = {
+                "premium_this_month": round(premium_this_month, 2),
+                "csp_win_rate": round(csp_win_rate, 4),
+                "cycles_completed": len(completed),
+                "cycles_active": len(active),
+                "current_drawdown_pct": round(current_drawdown, 4),
+            }
+
+            review = await self._advisor.weekly_review(metrics, trades_this_week)
+            if review is not None:
+                reviews_dir = _Path(settings.system.db_path).parent / "reviews"
+                reviews_dir.mkdir(exist_ok=True)
+                review_path = reviews_dir / f"weekly_{today.isoformat()}.json"
+                review_path.write_text(_json.dumps(review.model_dump(), indent=2))
+                alerter.alert(
+                    f"Weekly Review [{review.week_grade}]: "
+                    f"premium=${review.total_premium:.2f}, win_rate={review.win_rate:.0%}"
+                )
+                logger.info(f"[AI] Weekly review saved: {review_path}")
+        except Exception as e:
+            logger.warning(f"[AI] Weekly review error: {e}")
+
+    async def _midday_thesis_check(self) -> None:
+        """12 PM ET: ask Perplexity whether each open position's thesis still holds."""
+        if not self._is_market_open() or not self._researcher._enabled:
+            return
+        logger.info("=== MIDDAY THESIS CHECK ===")
+        for sym, pos in self._portfolio.positions.items():
+            try:
+                context = {
+                    "state": pos.side,
+                    "entry_price": float(pos.avg_entry_price) if hasattr(pos, "avg_entry_price") else "unknown",
+                }
+                thesis = await self._researcher.check_thesis(sym, context)
+                if thesis:
+                    logger.info(f"[Thesis] {sym}: {thesis}")
+                    if any(kw in thesis.lower() for kw in (
+                        "negative", "missed", "cut guidance", "regulatory", "insider selling", "broken"
+                    )):
+                        alerter.alert(f"[Thesis Warning] {sym}: {thesis[:200]}")
+            except Exception as e:
+                logger.warning(f"[Thesis] {sym} check failed: {e}")
+
+    def _write_research_log(self, research: dict, themes: list[str]) -> None:
+        """Append today's research summary to data/research_log.md (keep last 5 days)."""
+        from datetime import date as _date
+        log_path = Path(settings.system.db_path).parent / "research_log.md"
+        today = _date.today().isoformat()
+
+        lines = [f"\n## {today}"]
+        if themes:
+            lines.append(f"**Themes:** {', '.join(themes)}")
+        for sym, summary in research.items():
+            lines.append(f"**{sym}:** {summary}")
+
+        try:
+            existing = log_path.read_text() if log_path.exists() else ""
+            # Prune: keep only last 4 dated sections so new one makes 5
+            sections = existing.split("\n## ")
+            if sections and sections[0] == "":
+                sections = sections[1:]
+            recent = sections[-4:] if len(sections) >= 4 else sections
+            pruned = ("## " + "\n## ".join(recent)) if recent else ""
+            log_path.write_text(pruned + "\n".join(lines) + "\n")
+        except Exception as e:
+            logger.warning(f"[Researcher] Could not write research log: {e}")
+
+    def _get_daily_pnl_pct(self) -> float:
+        if self._risk._daily_start_value is None:
+            return 0.0
+        start = float(self._risk._daily_start_value)
+        if start == 0:
+            return 0.0
+        current = float(self._portfolio.total_value())
+        return (current - start) / start
+
+    def _get_todays_trades(self) -> list[dict]:
+        today = datetime.utcnow().date()
+        try:
+            with self._session_factory() as session:
+                return [
+                    {"symbol": t.symbol, "side": t.side, "fill_price": float(t.fill_price),
+                     "quantity": t.quantity, "strategy_id": t.strategy_id, "filled_at": str(t.filled_at)}
+                    for t in session.query(Trade).all()
+                    if t.filled_at and t.filled_at.date() == today
+                ]
+        except Exception:
+            return []
+
+    def _get_todays_signals(self) -> list[dict]:
+        today = datetime.utcnow().date()
+        try:
+            with self._session_factory() as session:
+                return [
+                    {"symbol": s.symbol, "signal_type": s.signal_type,
+                     "approved": s.approved, "rejection_reason": s.rejection_reason,
+                     "generated_at": str(s.generated_at)}
+                    for s in session.query(Signal).all()
+                    if s.generated_at and s.generated_at.date() == today
+                ]
+        except Exception:
+            return []
+
+    def _load_strategy_state(self) -> None:
+        """Restore Wheel strategy states from disk after a restart."""
+        path = Path(settings.system.db_path).parent / "strategy_state.json"
+        if not path.exists():
+            logger.info("No strategy_state.json found — starting fresh")
+            return
+        try:
+            saved = json.loads(path.read_text())
+        except Exception as e:
+            logger.warning(f"Could not read strategy_state.json: {e}")
+            return
+        for strategy in self._strategies:
+            strategy_data = saved.get(strategy.strategy_id, {})
+            if strategy_data:
+                strategy.load_state(strategy_data)
+                logger.info(f"Restored state for {strategy.strategy_id}")
 
     def _save_strategy_state(self) -> None:
         """Persist all strategy states to data/strategy_state.json for the dashboard."""

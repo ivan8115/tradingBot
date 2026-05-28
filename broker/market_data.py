@@ -10,6 +10,7 @@ import asyncio
 from decimal import Decimal
 from typing import Callable, Coroutine
 
+from alpaca.data.enums import DataFeed
 from alpaca.data.live import StockDataStream
 from alpaca.trading.stream import TradingStream
 from loguru import logger
@@ -84,7 +85,7 @@ class MarketDataStream:
                 self._data_stream = StockDataStream(
                     api_key=settings.alpaca_api_key,
                     secret_key=settings.alpaca_secret_key,
-                    feed="iex",          # free feed; use "sip" with paid plan
+                    feed=DataFeed.IEX,   # free feed; use DataFeed.SIP with paid plan
                 )
 
                 self._data_stream.subscribe_bars(self._on_bar, *self._symbols)
