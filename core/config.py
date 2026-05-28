@@ -37,6 +37,7 @@ class RiskConfig(BaseModel):
     daily_loss_limit_pct: float = 0.03
     position_sizing_method: Literal["kelly", "fixed_fraction", "percent_equity"] = "kelly"
     kelly_fraction: float = 0.25
+    max_weekly_momentum_trades: int = 10
 
 
 class CSPConfig(BaseModel):
@@ -93,11 +94,22 @@ class BreakoutStrategyConfig(BaseModel):
     volume_confirmation_multiplier: float = 1.5
 
 
+class SwingStrategyConfig(BaseModel):
+    enabled: bool = True
+    symbols: list[str] = []
+    stage_requirement: int = 2        # Minervini Stage 2 minimum
+    atr_stop_mult: float = 2.0
+    atr_target_mult: float = 4.0
+    max_hold_bars: int = 30           # force-exit stale positions
+    min_bars_for_entry: int = 50
+
+
 class StrategiesConfig(BaseModel):
     wheel: WheelStrategyConfig = Field(default_factory=WheelStrategyConfig)
     momentum: MomentumStrategyConfig = Field(default_factory=MomentumStrategyConfig)
     mean_reversion: MeanReversionStrategyConfig = Field(default_factory=MeanReversionStrategyConfig)
     breakout: BreakoutStrategyConfig = Field(default_factory=BreakoutStrategyConfig)
+    swing: SwingStrategyConfig = Field(default_factory=SwingStrategyConfig)
 
 
 class IndicatorsConfig(BaseModel):
@@ -132,6 +144,32 @@ class MonitoringConfig(BaseModel):
     slack_alerts: bool = False
     email_alerts: bool = False
     alert_on: list[str] = ["large_loss", "drawdown_breach", "fill", "daily_summary"]
+
+
+class PerplexityConfig(BaseModel):
+    enabled: bool = True
+    timeout_seconds: int = 15
+    max_symbols_per_call: int = 10
+
+
+class GuardrailsConfig(BaseModel):
+    max_open_positions: int = 6
+    max_new_trades_per_week: int = 3
+    max_position_pct: float = 0.20
+    target_deployment_pct: float = 0.80
+
+
+class ClaudeConfig(BaseModel):
+    enabled: bool = True
+    opus_model: str = "claude-opus-4-7"
+    sonnet_model: str = "claude-sonnet-4-6"
+    haiku_model: str = "claude-haiku-4-5-20251001"
+    max_tokens_signal: int = 1024
+    max_tokens_briefing: int = 2048
+    max_tokens_review: int = 4096
+    signal_eval_timeout_seconds: int = 10
+    briefing_timeout_seconds: int = 30
+    max_signal_evals_per_day: int = 20
 
 
 class SystemConfig(BaseModel):
@@ -169,6 +207,8 @@ class Settings(BaseSettings):
     smtp_pass: str = ""
     alert_email_to: str = ""
     quiverquant_api_key: str = ""
+    claude_api_key: str = ""
+    perplexity_api_key: str = ""
 
     # From config.yaml — populated by load()
     system: SystemConfig = Field(default_factory=SystemConfig)
@@ -180,6 +220,9 @@ class Settings(BaseSettings):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     watchlist: WatchlistConfig = Field(default_factory=WatchlistConfig)
+    claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
+    perplexity: PerplexityConfig = Field(default_factory=PerplexityConfig)
+    guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
 
     @classmethod
     def load(cls, config_path: str = "config.yaml") -> "Settings":
