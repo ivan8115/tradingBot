@@ -47,7 +47,7 @@ strategies:
       roll_when_dte: 7
 
   momentum:
-    enabled: true
+    enabled: false
     symbols:
       - SPY
       - QQQ
