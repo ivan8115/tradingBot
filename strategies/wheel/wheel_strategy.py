@@ -50,6 +50,8 @@ class WheelPosition:
     # Cached options chain (refreshed periodically)
     cached_chain: list[OptionContract] = field(default_factory=list)
     iv_history: list[float] = field(default_factory=list)
+    # AI pre-selected strike — set by scheduler before on_bar(), consumed once
+    ai_preferred_contract_id: Optional[str] = None
 
 
 class WheelStrategy(Strategy):
@@ -64,12 +66,14 @@ class WheelStrategy(Strategy):
         self,
         symbols: list[str],
         config: WheelStrategyConfig | None = None,
+        advisor=None,
     ) -> None:
         super().__init__(symbols)
         cfg = config or settings.strategies.wheel
         self._cfg = cfg
         self._csp_leg = CashSecuredPutLeg(cfg.csp)
         self._cc_leg = CoveredCallLeg(cfg.cc)
+        self._advisor = advisor
 
         # One WheelPosition per symbol
         self._positions: dict[str, WheelPosition] = {
@@ -197,11 +201,24 @@ class WheelStrategy(Strategy):
         if trend == "downtrend":
             return []
 
-        # Select strike
-        contract = self._csp_leg.select_strike(
-            chain=pos.cached_chain,
-            underlying_price=float(bar.close),
-        )
+        # Select strike — use AI pre-selection if available, else fall back to mechanical
+        ai_strike_reasoning = ""
+        contract = None
+        if pos.ai_preferred_contract_id:
+            contract = next(
+                (c for c in pos.cached_chain if c.contract_id == pos.ai_preferred_contract_id),
+                None,
+            )
+            if contract:
+                ai_strike_reasoning = "AI-selected strike"
+            pos.ai_preferred_contract_id = None  # consume — one-shot
+
+        if contract is None:
+            contract = self._csp_leg.select_strike(
+                chain=pos.cached_chain,
+                underlying_price=float(bar.close),
+            )
+
         if not contract:
             return []
 
@@ -213,6 +230,7 @@ class WheelStrategy(Strategy):
             f"DTE={contract.dte} | "
             f"Delta={contract.delta:.2f} | "
             f"Premium=${contract.mid:.2f}"
+            + (f" | {ai_strike_reasoning}" if ai_strike_reasoning else "")
         )
 
         greeks_delta = contract.delta  # already computed from chain
@@ -232,6 +250,8 @@ class WheelStrategy(Strategy):
                 "delta": greeks_delta,
                 "premium": float(contract.mid),
                 "iv_rank": iv_rank_val,
+                "ai_strike_reasoning": ai_strike_reasoning,
+                "collateral": float(contract.strike * 100),  # cash locked to secure this put
             },
         )]
 

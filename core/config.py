@@ -32,7 +32,7 @@ class UniverseConfig(BaseModel):
 class RiskConfig(BaseModel):
     max_portfolio_risk_pct: float = 0.02
     max_drawdown_pct: float = 0.15
-    max_single_position_pct: float = 0.10
+    max_single_position_pct: float = 0.20
     max_delta_exposure: int = 500
     daily_loss_limit_pct: float = 0.03
     position_sizing_method: Literal["kelly", "fixed_fraction", "percent_equity"] = "kelly"
@@ -156,7 +156,7 @@ class GuardrailsConfig(BaseModel):
     max_open_positions: int = 6
     max_new_trades_per_week: int = 3
     max_position_pct: float = 0.20
-    target_deployment_pct: float = 0.80
+    max_total_deployed_pct: float = 0.80
 
 
 class ClaudeConfig(BaseModel):

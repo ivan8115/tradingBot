@@ -18,7 +18,7 @@ universe:
 risk:
   max_portfolio_risk_pct: 0.02       # Max 2% of portfolio per trade
   max_drawdown_pct: 0.15             # Halt all trading at 15% drawdown
-  max_single_position_pct: 0.10      # Max 10% in any single symbol
+  max_single_position_pct: 0.20      # Max 20% in any single symbol (matches guardrails.max_position_pct)
   max_delta_exposure: 500            # Net portfolio delta limit (options)
   daily_loss_limit_pct: 0.03         # Stop trading after 3% daily loss
   position_sizing_method: kelly      # kelly | fixed_fraction | percent_equity
@@ -133,6 +133,6 @@ perplexity:             # controls Claude-backed research (model field unused)
 guardrails:
   max_open_positions: 6
   max_new_trades_per_week: 3
-  max_position_pct: 0.20
-  target_deployment_pct: 0.80
+  max_position_pct: 0.20           # Max 20% of account per single position
+  max_total_deployed_pct: 0.80     # Max 80% of account in open CSP collateral (20% buffer)
 
