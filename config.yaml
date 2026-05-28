@@ -76,6 +76,20 @@ strategies:
     lookback_period: 20
     volume_confirmation_multiplier: 1.5
 
+  swing:
+    enabled: false
+    symbols:
+      - NVDA
+      - META
+      - GOOGL
+      - MSFT
+      - AMZN
+    stage_requirement: 2
+    atr_stop_mult: 2.0
+    atr_target_mult: 4.0
+    max_hold_bars: 30
+    min_bars_for_entry: 50
+
 indicators:
   bar_window_size: 200              # Rolling bars kept in memory per symbol
   vwap_reset: market_open
@@ -122,17 +136,3 @@ guardrails:
   max_position_pct: 0.20
   target_deployment_pct: 0.80
 
-strategies:
-  swing:
-    enabled: false
-    symbols:
-      - NVDA
-      - META
-      - GOOGL
-      - MSFT
-      - AMZN
-    stage_requirement: 2
-    atr_stop_mult: 2.0
-    atr_target_mult: 4.0
-    max_hold_bars: 30
-    min_bars_for_entry: 50
