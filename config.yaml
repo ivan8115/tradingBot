@@ -99,3 +99,40 @@ monitoring:
     - drawdown_breach
     - fill
     - daily_summary
+
+claude:
+  enabled: true
+  sonnet_model: claude-sonnet-4-6
+  haiku_model: claude-haiku-4-5-20251001
+  max_tokens_signal: 1024
+  max_tokens_briefing: 2048
+  max_tokens_review: 4096
+  signal_eval_timeout_seconds: 10
+  briefing_timeout_seconds: 30
+  max_signal_evals_per_day: 20
+
+perplexity:             # controls Claude-backed research (model field unused)
+  enabled: true
+  timeout_seconds: 15
+  max_symbols_per_call: 10
+
+guardrails:
+  max_open_positions: 6
+  max_new_trades_per_week: 3
+  max_position_pct: 0.20
+  target_deployment_pct: 0.80
+
+strategies:
+  swing:
+    enabled: false
+    symbols:
+      - NVDA
+      - META
+      - GOOGL
+      - MSFT
+      - AMZN
+    stage_requirement: 2
+    atr_stop_mult: 2.0
+    atr_target_mult: 4.0
+    max_hold_bars: 30
+    min_bars_for_entry: 50
