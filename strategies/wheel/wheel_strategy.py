@@ -77,6 +77,14 @@ class WheelStrategy(Strategy):
         self._cc_leg = CoveredCallLeg(cfg.cc)
         self._advisor = advisor
 
+        # Populate per-symbol pain thresholds from config symbol_overrides
+        overrides = getattr(cfg, "symbol_overrides", {})
+        self._csp_leg._symbol_pain_thresholds = {
+            sym: float(ov.pain_threshold)
+            for sym, ov in overrides.items()
+            if ov.pain_threshold is not None
+        }
+
         # One WheelPosition per symbol
         self._positions: dict[str, WheelPosition] = {
             sym: WheelPosition(symbol=sym) for sym in symbols
@@ -119,6 +127,10 @@ class WheelStrategy(Strategy):
             pos.total_premium_collected += fill.fill_price
             pos.cycle_start = fill.filled_at
             logger.info(f"[Wheel] {sym}: CSP opened @ ${fill.fill_price} premium")
+            if pos.csp_position:
+                underlying_price = fill.metadata.get("underlying_price") if isinstance(fill.metadata, dict) else None
+                if underlying_price:
+                    pos.csp_position.underlying_price_at_entry = Decimal(str(underlying_price))
 
         elif leg == "csp_close" and fill.side == "buy":
             # CSP bought back — profit taken or stop hit
@@ -312,7 +324,12 @@ class WheelStrategy(Strategy):
         if current_price is None:
             return []
 
-        should_close, reason = self._csp_leg.should_close_early(pos.csp_position, current_price)
+        should_close, reason = self._csp_leg.should_close_early(
+            pos.csp_position,
+            current_contract_price=current_price,
+            current_underlying=bar.close,
+            dte=pos.csp_position.contract.dte,
+        )
         if should_close:
             logger.info(f"[Wheel] {bar.symbol}: Closing CSP — {reason}")
             return [SignalEvent(

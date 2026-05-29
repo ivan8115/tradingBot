@@ -49,6 +49,7 @@ class CSPConfig(BaseModel):
     min_premium: float = 1.00
     min_iv_rank: float = 50.0
     roll_when_dte: int = 7       # close/roll when DTE reaches this threshold
+    pain_threshold_default: float = 0.85  # Close if underlying < strike × this value
 
 
 class CCConfig(BaseModel):
@@ -59,11 +60,16 @@ class CCConfig(BaseModel):
     roll_when_dte: int = 7
 
 
+class WheelSymbolOverride(BaseModel):
+    pain_threshold: float | None = None
+
+
 class WheelStrategyConfig(BaseModel):
     enabled: bool = True
     symbols: list[str] = []
     csp: CSPConfig = Field(default_factory=CSPConfig)
     cc: CCConfig = Field(default_factory=CCConfig)
+    symbol_overrides: dict[str, WheelSymbolOverride] = Field(default_factory=dict)
 
 
 class MomentumStrategyConfig(BaseModel):

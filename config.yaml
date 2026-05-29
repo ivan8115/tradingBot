@@ -39,12 +39,18 @@ strategies:
       min_premium: 0.50
       min_iv_rank: 40
       roll_when_dte: 7
+      pain_threshold_default: 0.85    # Close if underlying < strike × 0.85 (default)
     cc:
       target_delta: 0.30
       min_dte: 21
       max_dte: 45
       profit_target_pct: 0.50
       roll_when_dte: 7
+  symbol_overrides:
+    AMD:
+      pain_threshold: 0.80
+    MARA:
+      pain_threshold: 0.80
 
   momentum:
     enabled: false
