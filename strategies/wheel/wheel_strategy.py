@@ -199,14 +199,8 @@ class WheelStrategy(Strategy):
         if not self._bars_available(bar.symbol, 50):
             return []
 
-        # Update IV history (using ATR as rough IV proxy if no real IV available)
-        current_iv = self._estimate_iv(snap, bar)
-        if current_iv > 0:
-            pos.iv_history.append(current_iv)
-            if len(pos.iv_history) > 252:
-                pos.iv_history = pos.iv_history[-252:]
-
-        iv_rank_val = iv_rank(current_iv, pos.iv_history) if len(pos.iv_history) > 10 else 0.0
+        # iv_history is populated by update_options_chain using real ATM IV from the chain
+        iv_rank_val = iv_rank(pos.iv_history[-1], pos.iv_history[:-1]) if len(pos.iv_history) > 10 else 0.0
 
         # Check IV Rank threshold
         if iv_rank_val < self._cfg.csp.min_iv_rank:
@@ -415,10 +409,29 @@ class WheelStrategy(Strategy):
     # Helpers
     # ------------------------------------------------------------------
 
-    def update_options_chain(self, symbol: str, chain: list[OptionContract]) -> None:
-        """Called by scheduler to refresh the options chain for a symbol."""
-        if symbol in self._positions:
-            self._positions[symbol].cached_chain = chain
+    def update_options_chain(
+        self, symbol: str, chain: list[OptionContract], underlying_price: float | None = None
+    ) -> None:
+        """Called by scheduler to refresh the options chain for a symbol.
+        Also extracts ATM IV to build iv_history for IV Rank calculation.
+        """
+        if symbol not in self._positions:
+            return
+        pos = self._positions[symbol]
+        pos.cached_chain = chain
+
+        if underlying_price and underlying_price > 0:
+            puts_in_window = [
+                c for c in chain
+                if c.option_type == "put"
+                and self._cfg.csp.min_dte <= c.dte <= self._cfg.csp.max_dte
+                and getattr(c, "iv", None)
+            ]
+            if puts_in_window:
+                atm_put = min(puts_in_window, key=lambda c: abs(float(c.strike) - underlying_price))
+                pos.iv_history.append(atm_put.iv)
+                if len(pos.iv_history) > 252:
+                    pos.iv_history = pos.iv_history[-252:]
 
     def sync_symbols(self, new_symbols: list[str]) -> None:
         """

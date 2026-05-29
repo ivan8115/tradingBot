@@ -625,7 +625,9 @@ class TradingScheduler:
                         dte_max=45,
                         option_type="both",
                     )
-                    wheel.update_options_chain(symbol, chain)
+                    current_prices = getattr(self._portfolio, "_current_prices", {})
+                    current_price = float(current_prices.get(symbol, 0)) or None
+                    wheel.update_options_chain(symbol, chain, underlying_price=current_price)
                     logger.debug(f"[Scheduler] Chain refreshed: {symbol} ({len(chain)} contracts)")
                 except Exception as e:
                     logger.warning(f"[Scheduler] Chain refresh failed for {symbol}: {e}")
