@@ -758,6 +758,8 @@ class TradingScheduler:
 
     async def _get_current_price(self, symbol: str) -> float | None:
         """Fetch the most recent closing price for a symbol via HistoricalDataFetcher."""
+        # Uses daily close — won't catch intraday pre-market moves.
+        # True pre-market detection requires Alpaca extended-hours quotes (see TODO.md).
         try:
             loop = asyncio.get_event_loop()
             df = await loop.run_in_executor(
