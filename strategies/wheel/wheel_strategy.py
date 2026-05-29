@@ -388,7 +388,11 @@ class WheelStrategy(Strategy):
         if current_price is None:
             return []
 
-        should_close, reason = self._cc_leg.should_close_early(pos.cc_position, current_price)
+        should_close, reason = self._cc_leg.should_close_early(
+            pos.cc_position,
+            current_price,
+            underlying_price=bar.close,
+        )
         if should_close:
             logger.info(f"[Wheel] {bar.symbol}: Closing CC — {reason}")
             return [SignalEvent(

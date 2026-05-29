@@ -104,11 +104,13 @@ class CoveredCallLeg:
         self,
         position: CCPosition,
         current_contract_price: Decimal,
+        underlying_price: Decimal | None = None,
     ) -> tuple[bool, str]:
         """
         Close the CC early when:
         1. Profit target reached (50% of max)
         2. DTE ≤ roll_when_dte (roll to next expiry)
+        3. Stock stop: underlying < cost_basis × stock_stop_loss_pct
         """
         profit_pct = position.profit_pct(current_contract_price)
 
@@ -117,6 +119,15 @@ class CoveredCallLeg:
 
         if position.contract.dte <= self._cfg.roll_when_dte:
             return True, f"DTE={position.contract.dte} ≤ {self._cfg.roll_when_dte} — roll"
+
+        stop_pct = getattr(self._cfg, "stock_stop_loss_pct", 0.90)
+        if underlying_price is not None and stop_pct > 0:
+            stop_price = position.stock_cost_basis * Decimal(str(stop_pct))
+            if underlying_price < stop_price:
+                return True, (
+                    f"stock_stop: underlying=${underlying_price:.2f} < "
+                    f"cost_basis × {stop_pct:.0%} = ${stop_price:.2f}"
+                )
 
         return False, ""
 

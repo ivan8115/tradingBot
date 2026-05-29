@@ -58,6 +58,7 @@ class CCConfig(BaseModel):
     max_dte: int = 45
     profit_target_pct: float = 0.50
     roll_when_dte: int = 7
+    stock_stop_loss_pct: float = 0.90
 
 
 class WheelSymbolOverride(BaseModel):
