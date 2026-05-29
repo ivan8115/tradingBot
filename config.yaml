@@ -46,11 +46,11 @@ strategies:
       max_dte: 45
       profit_target_pct: 0.50
       roll_when_dte: 7
-  symbol_overrides:
-    AMD:
-      pain_threshold: 0.80
-    MARA:
-      pain_threshold: 0.80
+    symbol_overrides:
+      AMD:
+        pain_threshold: 0.80
+      MARA:
+        pain_threshold: 0.80
 
   momentum:
     enabled: false
