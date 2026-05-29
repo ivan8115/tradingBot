@@ -55,7 +55,8 @@ Nothing trades unless all five layers agree.
 | Target holding period | 21–45 days |
 | Target delta | ~0.28 (moderately out of the money) |
 | Profit target | 50% of premium collected |
-| Stop loss | 2× premium paid |
+| Soft stop | 2.5× premium AND underlying below strike |
+| Pain threshold | Underlying < strike × 0.85 (AMD/MARA: 0.80) |
 
 ---
 
@@ -74,6 +75,7 @@ The main risk is getting assigned on a stock that then **keeps falling and doesn
 | Time | What Happens |
 |---|---|
 | 8:00 AM | Portfolio sync, market regime check, AI pre-market briefing |
+| 8:15 AM | Gap-down scan: open CSP positions checked for overnight drops >10% |
 | 8:30 AM | Watchlist refreshed from Finviz |
 | 9:30 AM | Market opens, live data stream starts |
 | Every 15 min | Options chains refreshed, new trades evaluated |
