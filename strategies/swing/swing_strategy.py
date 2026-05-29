@@ -51,6 +51,7 @@ class SwingStrategy(Strategy):
 
         self._in_position: dict[str, bool] = {sym: False for sym in symbols}
         self._bars_held: dict[str, int] = {sym: 0 for sym in symbols}
+        self._entry_stop_levels: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Strategy interface
@@ -85,10 +86,14 @@ class SwingStrategy(Strategy):
         if fill.side == "buy":
             self._in_position[sym] = True
             self._bars_held[sym] = 0
+            stop = fill.metadata.get("stop_loss") if isinstance(fill.metadata, dict) else None
+            if stop is not None:
+                self._entry_stop_levels[sym] = float(stop)
             logger.info(f"[Swing] Position opened: LONG {sym} @ ${fill.fill_price}")
         elif fill.side == "sell":
             self._in_position[sym] = False
             self._bars_held[sym] = 0
+            self._entry_stop_levels.pop(sym, None)
             logger.info(f"[Swing] Position closed: {sym} @ ${fill.fill_price}")
 
     # ------------------------------------------------------------------
@@ -156,6 +161,11 @@ class SwingStrategy(Strategy):
     def _check_exits(self, sym: str, snap, prev, bar: BarEvent) -> list[SignalEvent]:
         close = float(bar.close)
 
+        # Exit 0: Hard stop loss
+        stop_level = self._entry_stop_levels.get(sym)
+        if stop_level is not None and close <= stop_level:
+            return self._exit_signal(sym, bar, f"stop_loss: close={close:.2f} <= stop={stop_level:.2f}")
+
         # Exit 1: Sad Panda — EMA crossback
         if is_sad_panda(snap, prev):
             return self._exit_signal(sym, bar, "EMA crossback (sad panda)")
@@ -193,11 +203,13 @@ class SwingStrategy(Strategy):
         return {
             "in_position": self._in_position.copy(),
             "bars_held": self._bars_held.copy(),
+            "entry_stop_levels": self._entry_stop_levels.copy(),
         }
 
     def load_state(self, state: dict[str, Any]) -> None:
         self._in_position.update(state.get("in_position", {}))
         self._bars_held.update(state.get("bars_held", {}))
+        self._entry_stop_levels.update(state.get("entry_stop_levels", {}))
 
     # ------------------------------------------------------------------
     # Dynamic symbol list (called by scheduler on watchlist refresh)
