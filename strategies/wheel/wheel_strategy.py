@@ -12,6 +12,7 @@ State transitions are driven by FillEvents (not BarEvents) for exactness.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -23,6 +24,7 @@ from loguru import logger
 from analysis.greeks import iv_rank
 from analysis.indicators import TechnicalIndicators
 from core.config import WheelStrategyConfig, settings
+from core.decision_log import log_decision
 from core.events import BarEvent, FillEvent, SignalEvent
 from strategies.base import Strategy
 from strategies.wheel.covered_call_leg import CCPosition, CoveredCallLeg
@@ -176,6 +178,8 @@ class WheelStrategy(Strategy):
         SCANNING state: look for a valid CSP entry.
         We need the options chain from pos.cached_chain (refreshed externally).
         """
+        session_id = str(uuid.uuid4())
+
         if not pos.cached_chain:
             # No chain available yet — wait for scheduler to populate
             return []
@@ -194,11 +198,27 @@ class WheelStrategy(Strategy):
 
         # Check IV Rank threshold
         if iv_rank_val < self._cfg.csp.min_iv_rank:
+            log_decision({
+                "session_id": session_id,
+                "stage": "wheel/mechanical_filter",
+                "symbol": bar.symbol,
+                "decision": "reject",
+                "reason": "iv_rank_below_threshold",
+                "iv_rank": iv_rank_val,
+                "threshold": self._cfg.csp.min_iv_rank,
+            })
             return []
 
         # Trend must be neutral or bullish
         trend = self._get_trend(bar.symbol)
         if trend == "downtrend":
+            log_decision({
+                "session_id": session_id,
+                "stage": "wheel/mechanical_filter",
+                "symbol": bar.symbol,
+                "decision": "reject",
+                "reason": "downtrend",
+            })
             return []
 
         # Select strike — use AI pre-selection if available, else fall back to mechanical
@@ -235,6 +255,21 @@ class WheelStrategy(Strategy):
 
         greeks_delta = contract.delta  # already computed from chain
 
+        log_decision({
+            "session_id": session_id,
+            "stage": "wheel/entry_signal",
+            "symbol": bar.symbol,
+            "contract_id": contract.contract_id,
+            "strike": float(contract.strike),
+            "dte": contract.dte,
+            "delta": contract.delta,
+            "iv": getattr(contract, "iv", None),
+            "premium": float(contract.mid),
+            "collateral": float(contract.strike * 100),
+            "iv_rank": iv_rank_val,
+            "ai_selected": bool(ai_strike_reasoning),
+        })
+
         return [SignalEvent(
             strategy_id=self.strategy_id,
             symbol=bar.symbol,
@@ -252,6 +287,7 @@ class WheelStrategy(Strategy):
                 "iv_rank": iv_rank_val,
                 "ai_strike_reasoning": ai_strike_reasoning,
                 "collateral": float(contract.strike * 100),  # cash locked to secure this put
+                "session_id": session_id,
             },
         )]
 

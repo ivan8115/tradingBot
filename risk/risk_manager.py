@@ -12,6 +12,7 @@ from decimal import Decimal
 from loguru import logger
 
 from core.config import settings
+from core.decision_log import log_decision
 from core.events import SignalEvent
 from data.market_regime import Regime
 from portfolio.portfolio import Portfolio
@@ -130,6 +131,20 @@ class RiskManager:
                 f"[RiskManager] Signal APPROVED: {signal.strategy_id} "
                 f"{signal.signal_type} {signal.symbol}"
             )
+
+        try:
+            log_decision({
+                "session_id": signal.metadata.get("session_id") if hasattr(signal, "metadata") else None,
+                "stage": "risk_manager",
+                "symbol": signal.symbol,
+                "signal_type": signal.signal_type,
+                "strategy_id": signal.strategy_id,
+                "approved": approved,
+                "reason": next((c.reason for c in checks if not c.passed), None),
+                "checks": [{"name": c.name, "passed": c.passed, "reason": c.reason} for c in checks],
+            })
+        except Exception as _log_exc:
+            logger.debug(f"[RiskManager] decision log write failed: {_log_exc}")
 
         return ValidationResult(approved=approved, checks=checks)
 

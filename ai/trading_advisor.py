@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -16,6 +17,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from core.config import settings
+from core.decision_log import log_decision
 from core.events import SignalEvent
 
 
@@ -153,6 +155,7 @@ class TradingAdvisor:
                     response_model=PreMarketBriefing,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_briefing,
+                    stage="llm/pre_market_briefing",
                 ),
                 timeout=self._cfg.briefing_timeout_seconds,
             )
@@ -206,6 +209,9 @@ class TradingAdvisor:
                     response_model=SignalEvalResult,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_signal,
+                    session_id=signal.metadata.get("session_id") if hasattr(signal, "metadata") else None,
+                    symbol=signal.symbol,
+                    stage="llm/evaluate_signal",
                 ),
                 timeout=self._cfg.signal_eval_timeout_seconds,
             )
@@ -268,6 +274,8 @@ class TradingAdvisor:
                     response_model=StrikeSelectionResult,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_signal,
+                    symbol=symbol,
+                    stage="llm/select_csp_strike",
                 ),
                 timeout=self._cfg.signal_eval_timeout_seconds,
             )
@@ -319,6 +327,7 @@ class TradingAdvisor:
                     response_model=DailyReview,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_review,
+                    stage="llm/daily_review",
                 ),
                 timeout=self._cfg.briefing_timeout_seconds,
             )
@@ -357,6 +366,7 @@ class TradingAdvisor:
                     response_model=WeeklyReview,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_review,
+                    stage="llm/weekly_review",
                 ),
                 timeout=self._cfg.briefing_timeout_seconds,
             )
@@ -428,10 +438,15 @@ class TradingAdvisor:
         response_model: type[BaseModel],
         user_prompt: str,
         max_tokens: int,
+        *,
+        session_id: str | None = None,
+        symbol: str | None = None,
+        stage: str | None = None,
     ) -> Optional[Any]:
         client = self._build_client()
         tool_def = _model_to_tool(tool_name, tool_description, response_model)
 
+        start = time.monotonic()
         response = await client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -440,13 +455,32 @@ class TradingAdvisor:
             tool_choice={"type": "any"},
             messages=[{"role": "user", "content": user_prompt}],
         )
+        latency_ms = int((time.monotonic() - start) * 1000)
 
+        result = None
         for block in response.content:
             if block.type == "tool_use" and block.name == tool_name:
-                return response_model.model_validate(block.input)
+                result = response_model.model_validate(block.input)
+                break
 
-        logger.warning(f"[AI] No tool_use block in response for {tool_name}")
-        return None
+        try:
+            log_decision({
+                "session_id": session_id,
+                "stage": stage or f"llm/{tool_name}",
+                "symbol": symbol,
+                "model": model,
+                "latency_ms": latency_ms,
+                "input_tokens": getattr(getattr(response, "usage", None), "input_tokens", None),
+                "output_tokens": getattr(getattr(response, "usage", None), "output_tokens", None),
+                "prompt_preview": user_prompt[:500],
+                "result_preview": str(result)[:500] if result else None,
+            })
+        except Exception as _log_exc:
+            logger.debug(f"[AI] decision log write failed: {_log_exc}")
+
+        if result is None:
+            logger.warning(f"[AI] No tool_use block in response for {tool_name}")
+        return result
 
     def _reset_eval_counter_if_new_day(self) -> None:
         today = date.today()

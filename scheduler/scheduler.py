@@ -22,6 +22,7 @@ from broker.client import BrokerClient
 from broker.market_data import MarketDataStream
 from broker.portfolio import PortfolioTracker
 from core.config import settings
+from core.decision_log import log_decision
 from core.events import BarEvent, FillEvent
 from data.earnings_calendar import earnings_calendar as _earnings_calendar
 from database.migrations import get_session_factory
@@ -494,6 +495,37 @@ class TradingScheduler:
                     try:
                         eval_result = await self._advisor.evaluate_signal(signal, market_context)
                         if eval_result is not None:
+                            # Find the wheel position for the chain snapshot (best effort)
+                            wheel_pos = None
+                            for _wheel in self._wheel_strategies:
+                                if signal.symbol in _wheel._positions:
+                                    wheel_pos = _wheel._positions[signal.symbol]
+                                    break
+                            try:
+                                log_decision({
+                                    "session_id": signal.metadata.get("session_id"),
+                                    "stage": "scheduler/sonnet_eval",
+                                    "symbol": signal.symbol,
+                                    "signal_type": signal.signal_type,
+                                    "ai_approved": eval_result.approved,
+                                    "ai_confidence": getattr(eval_result, "confidence", None),
+                                    "ai_reason": getattr(eval_result, "reasoning", None),
+                                    "options_chain_snapshot": [
+                                        {
+                                            "contract_id": c.contract_id,
+                                            "strike": float(c.strike),
+                                            "dte": c.dte,
+                                            "bid": float(c.bid) if hasattr(c, "bid") else None,
+                                            "ask": float(c.ask) if hasattr(c, "ask") else None,
+                                            "delta": c.delta,
+                                            "iv": getattr(c, "iv", None),
+                                        }
+                                        for c in (wheel_pos.cached_chain[:5] if wheel_pos else [])
+                                    ],
+                                })
+                            except Exception as _log_exc:
+                                logger.debug(f"[Scheduler] decision log write failed: {_log_exc}")
+
                             if not eval_result.approved:
                                 signal.metadata["ai_rejected"] = True
                                 signal.metadata["ai_reasoning"] = eval_result.reasoning
