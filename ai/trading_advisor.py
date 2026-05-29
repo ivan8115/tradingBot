@@ -274,6 +274,7 @@ class TradingAdvisor:
                     response_model=StrikeSelectionResult,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_signal,
+                    session_id=None,
                     symbol=symbol,
                     stage="llm/select_csp_strike",
                 ),

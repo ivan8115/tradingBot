@@ -10,7 +10,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 
 def main() -> None:
@@ -24,8 +24,15 @@ def main() -> None:
         print("No decision logs found at logs/decisions/", file=sys.stderr)
         sys.exit(1)
 
+    # Compute cutoff date string e.g. "2026-05-01" for --days 7 from 2026-05-08
+    cutoff_date = (date.today() - timedelta(days=args.days)).isoformat()
+
     records = []
     for path in sorted(log_dir.glob("*.jsonl")):
+        # filename is YYYY-MM-DD.jsonl
+        file_date = path.stem  # e.g. "2026-05-28"
+        if file_date < cutoff_date:
+            continue
         for line in path.read_text().splitlines():
             if not line.strip():
                 continue
