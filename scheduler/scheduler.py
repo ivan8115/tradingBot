@@ -32,7 +32,7 @@ from data.market_regime import MarketRegimeFilter
 from data.watchlist_provider import WatchlistProvider
 from execution.executor import Executor
 from execution.order_builder import OrderBuilder
-from monitoring.alerting import alerter
+from monitoring.alerting import AlertLevel, alerter
 from portfolio.portfolio import Portfolio
 from risk.position_sizer import PositionSizer
 from risk.risk_manager import RiskManager
@@ -696,7 +696,6 @@ class TradingScheduler:
                     if any(kw in thesis.lower() for kw in (
                         "negative", "missed", "cut guidance", "regulatory", "insider selling", "broken"
                     )):
-                        from monitoring.alerting import AlertLevel
                         alerter.alert("thesis_warning", f"[Thesis Warning] {sym}: {thesis[:200]}", level=AlertLevel.WARNING)
             except Exception as e:
                 logger.warning(f"[Thesis] {sym} check failed: {e}")
@@ -744,7 +743,6 @@ class TradingScheduler:
                         except Exception as log_exc:
                             logger.warning(f"[GapDown] Decision log write failed for {symbol}: {log_exc}")
                         try:
-                            from monitoring.alerting import AlertLevel
                             alerter.alert(
                                 "gap_down",
                                 msg,

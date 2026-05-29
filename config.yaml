@@ -120,6 +120,9 @@ monitoring:
     - fill
     - daily_summary
     - gap_down
+    - daily_review
+    - weekly_review
+    - thesis_warning
 
 claude:
   enabled: true
