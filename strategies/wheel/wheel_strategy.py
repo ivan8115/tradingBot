@@ -124,7 +124,7 @@ class WheelStrategy(Strategy):
         if leg == "csp_open" and fill.side == "sell":
             # CSP was sold — move to CSP_OPEN
             pos.state = WheelState.CSP_OPEN
-            pos.total_premium_collected += fill.fill_price
+            pos.total_premium_collected += fill.fill_price * 100
             pos.cycle_start = fill.filled_at
             logger.info(f"[Wheel] {sym}: CSP opened @ ${fill.fill_price} premium")
             if pos.csp_position:
@@ -157,7 +157,7 @@ class WheelStrategy(Strategy):
 
         elif leg == "cc_open" and fill.side == "sell":
             pos.state = WheelState.CC_OPEN
-            pos.total_premium_collected += fill.fill_price
+            pos.total_premium_collected += fill.fill_price * 100
             logger.info(f"[Wheel] {sym}: CC opened @ ${fill.fill_price} premium")
 
         elif leg == "cc_close":
