@@ -212,6 +212,10 @@ class TradingAdvisor:
                     session_id=signal.metadata.get("session_id") if hasattr(signal, "metadata") else None,
                     symbol=signal.symbol,
                     stage="llm/evaluate_signal",
+                    shadow_decision={
+                        "approved": True,
+                        "reason": "mechanical_baseline_always_approves_generated_signals",
+                    },
                 ),
                 timeout=self._cfg.signal_eval_timeout_seconds,
             )
@@ -266,6 +270,13 @@ class TradingAdvisor:
                 "Target delta around -0.28, DTE 21-45 days, adequate bid/ask spread. "
                 "The contract_id MUST exactly match one in the list above."
             )
+            # Mechanical baseline: contract closest to target delta
+            _target_delta = -0.28
+            _mechanical = min(
+                (c for c in chain if c.get("delta") is not None),
+                key=lambda c: abs(c["delta"] - _target_delta),
+                default=None,
+            )
             result = await asyncio.wait_for(
                 self._call_structured(
                     model=self._cfg.opus_model,
@@ -277,6 +288,12 @@ class TradingAdvisor:
                     session_id=None,
                     symbol=symbol,
                     stage="llm/select_csp_strike",
+                    shadow_decision={
+                        "contract_id": _mechanical.get("contract_id") if _mechanical else None,
+                        "strike": _mechanical.get("strike") if _mechanical else None,
+                        "delta": _mechanical.get("delta") if _mechanical else None,
+                        "reason": "closest_to_target_delta_-0.28",
+                    },
                 ),
                 timeout=self._cfg.signal_eval_timeout_seconds,
             )
@@ -443,6 +460,7 @@ class TradingAdvisor:
         session_id: str | None = None,
         symbol: str | None = None,
         stage: str | None = None,
+        shadow_decision: dict | None = None,
     ) -> Optional[Any]:
         client = self._build_client()
         tool_def = _model_to_tool(tool_name, tool_description, response_model)
@@ -465,7 +483,7 @@ class TradingAdvisor:
                 break
 
         try:
-            log_decision({
+            record: dict = {
                 "session_id": session_id,
                 "stage": stage or f"llm/{tool_name}",
                 "symbol": symbol,
@@ -475,7 +493,10 @@ class TradingAdvisor:
                 "output_tokens": getattr(getattr(response, "usage", None), "output_tokens", None),
                 "prompt_preview": user_prompt[:500],
                 "result_preview": str(result)[:500] if result else None,
-            })
+            }
+            if shadow_decision is not None:
+                record["shadow_decision"] = shadow_decision
+            log_decision(record)
         except Exception as _log_exc:
             logger.debug(f"[AI] decision log write failed: {_log_exc}")
 
