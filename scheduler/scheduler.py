@@ -417,7 +417,7 @@ class TradingScheduler:
                 reviews_dir.mkdir(exist_ok=True)
                 review_path = reviews_dir / f"daily_{datetime.utcnow().date().isoformat()}.json"
                 review_path.write_text(_json.dumps(review.model_dump(), indent=2))
-                alerter.alert(f"Daily Review [{review.grade}]: {review.summary}")
+                alerter.alert("daily_review", f"Daily Review [{review.grade}]: {review.summary}")
                 logger.info(f"[AI] Daily review saved: {review_path}")
         except Exception as e:
             logger.warning(f"[AI] Daily review error: {e}")
@@ -671,8 +671,9 @@ class TradingScheduler:
                 review_path = reviews_dir / f"weekly_{today.isoformat()}.json"
                 review_path.write_text(_json.dumps(review.model_dump(), indent=2))
                 alerter.alert(
+                    "weekly_review",
                     f"Weekly Review [{review.week_grade}]: "
-                    f"premium=${review.total_premium:.2f}, win_rate={review.win_rate:.0%}"
+                    f"premium=${review.total_premium:.2f}, win_rate={review.win_rate:.0%}",
                 )
                 logger.info(f"[AI] Weekly review saved: {review_path}")
         except Exception as e:
@@ -695,7 +696,8 @@ class TradingScheduler:
                     if any(kw in thesis.lower() for kw in (
                         "negative", "missed", "cut guidance", "regulatory", "insider selling", "broken"
                     )):
-                        alerter.alert(f"[Thesis Warning] {sym}: {thesis[:200]}")
+                        from monitoring.alerting import AlertLevel
+                        alerter.alert("thesis_warning", f"[Thesis Warning] {sym}: {thesis[:200]}", level=AlertLevel.WARNING)
             except Exception as e:
                 logger.warning(f"[Thesis] {sym} check failed: {e}")
 
