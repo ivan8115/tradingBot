@@ -198,6 +198,17 @@ class CashSecuredPutLeg:
                 f"underlying=${current_underlying:.2f} < strike=${position.contract.strike:.2f}"
             )
 
+        # Standalone mark stop: option price reached N× credit regardless of underlying direction
+        # Catches pure IV-spike scenarios where Tier 1 (requires underlying < strike) won't fire
+        mark_stop_mult = getattr(self._cfg, "mark_stop_multiplier", 3.0)
+        if mark_stop_mult > 0:
+            mark_stop_threshold = position.premium_received * Decimal(str(mark_stop_mult))
+            if current_contract_price >= mark_stop_threshold:
+                return True, (
+                    f"mark_stop_{mark_stop_mult:.0f}x: mark=${current_contract_price:.2f} >= "
+                    f"{mark_stop_mult:.0f}× credit=${mark_stop_threshold:.2f}"
+                )
+
         # Tier 2: pain threshold — underlying dropped too far regardless of option price
         if current_underlying is not None:
             pain_pct = self._symbol_pain_thresholds.get(

@@ -132,3 +132,52 @@ def test_dte_roll_still_works():
     )
     assert closed is True
     assert "dte" in reason.lower()
+
+
+def test_mark_stop_triggers_on_pure_iv_spike_above_strike():
+    """Mark at 3× credit with stock ABOVE strike (pure IV event) → close.
+    Tier 1 (AND: mark >= 2.5× AND underlying < strike) would NOT catch this."""
+    from core.config import CSPConfig
+    cfg = MagicMock(spec=CSPConfig)
+    cfg.profit_target_pct = 0.50
+    cfg.stop_loss_multiplier = 2.0
+    cfg.roll_when_dte = 7
+    cfg.pain_threshold_default = 0.85
+    cfg.mark_stop_multiplier = 3.0
+
+    from strategies.wheel.csp_leg import CashSecuredPutLeg
+    leg = CashSecuredPutLeg(cfg)
+
+    pos = _make_position(strike=50.0, premium=1.50)
+    # Mark jumped to 4.50 (3× $1.50), but stock is at $52 (above strike — OTM)
+    closed, reason = leg.should_close_early(
+        pos,
+        current_contract_price=Decimal("4.50"),
+        current_underlying=Decimal("52.00"),  # above strike — Tier 1 won't fire
+        dte=30,
+    )
+    assert closed is True
+    assert "mark_stop" in reason.lower() or "3" in reason
+
+
+def test_mark_stop_does_not_trigger_below_multiplier():
+    """Mark at 2.9× credit (below 3× threshold) with stock above strike → no exit."""
+    from core.config import CSPConfig
+    cfg = MagicMock(spec=CSPConfig)
+    cfg.profit_target_pct = 0.50
+    cfg.stop_loss_multiplier = 2.0
+    cfg.roll_when_dte = 7
+    cfg.pain_threshold_default = 0.85
+    cfg.mark_stop_multiplier = 3.0
+
+    from strategies.wheel.csp_leg import CashSecuredPutLeg
+    leg = CashSecuredPutLeg(cfg)
+
+    pos = _make_position(strike=50.0, premium=1.50)
+    closed, _ = leg.should_close_early(
+        pos,
+        current_contract_price=Decimal("4.35"),  # 2.9× $1.50 = $4.35, below 3× ($4.50)
+        current_underlying=Decimal("52.00"),
+        dte=30,
+    )
+    assert closed is False

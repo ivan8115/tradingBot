@@ -50,6 +50,7 @@ class CSPConfig(BaseModel):
     min_iv_rank: float = 50.0
     roll_when_dte: int = 7       # close/roll when DTE reaches this threshold
     pain_threshold_default: float = 0.85  # Close if underlying < strike × this value
+    mark_stop_multiplier: float = 3.0  # Close if mark reaches 3× credit (IV spike stop)
 
 
 class CCConfig(BaseModel):

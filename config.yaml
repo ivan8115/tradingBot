@@ -40,6 +40,7 @@ strategies:
       min_iv_rank: 40
       roll_when_dte: 7
       pain_threshold_default: 0.85    # Close if underlying < strike × 0.85 (default)
+      mark_stop_multiplier: 3.0
     cc:
       target_delta: 0.30
       min_dte: 21
