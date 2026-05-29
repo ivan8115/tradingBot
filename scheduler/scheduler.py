@@ -325,6 +325,17 @@ class TradingScheduler:
             return
 
         logger.info("=== MARKET OPEN ===")
+
+        # Seed daily loss baseline if not already set by _pre_market (mid-session restart case)
+        if self._risk._daily_start_value is None:
+            self._tracker.sync()
+            self._portfolio = Portfolio(cash=self._tracker.cash)
+            self._risk.set_daily_start_value(self._portfolio)
+            logger.info(
+                f"[RiskManager] Daily baseline seeded at market open "
+                f"(mid-session start): ${float(self._risk._daily_start_value):,.2f}"
+            )
+
         for strategy in self._strategies:
             strategy.on_start()
 
