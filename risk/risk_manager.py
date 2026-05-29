@@ -67,6 +67,7 @@ class RiskManager:
 
         self._daily_start_value: Decimal | None = None
         self._net_portfolio_delta: float = 0.0
+        self._committed_csp_collateral: float = 0.0
         self._regime: Regime = Regime.NEUTRAL
         self._momentum_trades_this_week: int = 0
         self._week_iso: int = -1
@@ -110,6 +111,13 @@ class RiskManager:
             checks.append(self._check_weekly_trade_count())
 
         approved = all(c.passed for c in checks)
+
+        if approved and signal.signal_type == "SELL_PUT":
+            self._committed_csp_collateral += float(signal.metadata.get("collateral", 0))
+
+        if approved and signal.signal_type == "BUY_TO_CLOSE_PUT":
+            collateral = float(signal.metadata.get("collateral", 0))
+            self._committed_csp_collateral = max(0.0, self._committed_csp_collateral - collateral)
 
         if approved and signal.signal_type in _entry_signal_types:
             self._reset_global_week_counter_if_needed()
@@ -161,6 +169,10 @@ class RiskManager:
         self._regime = regime
         logger.info(f"[RiskManager] Market regime set to: {regime.value}")
 
+    def release_collateral(self, amount: float) -> None:
+        """Release committed CSP collateral (e.g. on assignment or manual close)."""
+        self._committed_csp_collateral = max(0.0, self._committed_csp_collateral - amount)
+
     # ------------------------------------------------------------------
     # Individual checks
     # ------------------------------------------------------------------
@@ -193,10 +205,10 @@ class RiskManager:
     def _check_total_collateral(
         self, signal: SignalEvent, portfolio: Portfolio
     ) -> RiskCheck | None:
-        """For SELL_PUT only: reject if total locked collateral would exceed the cap.
+        """For SELL_PUT only: reject if committed CSP collateral would exceed the cap.
 
-        Returns None when the check doesn't apply (non-SELL_PUT signals or missing metadata),
-        so the caller can skip adding it to the checks list entirely.
+        Tracks committed collateral internally — CSP cash stays in portfolio until
+        assignment, so portfolio.cash is not a reliable measure of deployment.
         """
         if signal.signal_type != "SELL_PUT":
             return None
@@ -206,16 +218,15 @@ class RiskManager:
         total_value = float(portfolio.total_value())
         if total_value == 0:
             return None
-        currently_deployed = total_value - float(portfolio.cash)
-        projected_pct = (currently_deployed + proposed) / total_value
+        projected_pct = (self._committed_csp_collateral + proposed) / total_value
         if projected_pct > self._max_total_deployed_pct:
             return RiskCheck(
                 name="collateral_cap",
                 passed=False,
                 reason=(
-                    f"Collateral cap: deploying ${proposed:,.0f} would bring total to "
-                    f"{projected_pct:.1%} (limit {self._max_total_deployed_pct:.0%}). "
-                    f"Currently deployed: ${currently_deployed:,.0f} / ${total_value:,.0f}."
+                    f"Collateral cap: deploying ${proposed:,.0f} would bring committed "
+                    f"CSP collateral to {projected_pct:.1%} (limit {self._max_total_deployed_pct:.0%}). "
+                    f"Currently committed: ${self._committed_csp_collateral:,.0f} / ${total_value:,.0f}."
                 ),
             )
         return RiskCheck(name="collateral_cap", passed=True)

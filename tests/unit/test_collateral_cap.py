@@ -39,8 +39,11 @@ def test_rejects_when_collateral_would_exceed_80_pct():
     from risk.risk_manager import RiskManager
 
     rm = RiskManager(max_total_deployed_pct=0.80)
-    # total=$10k, cash=$2k → currently $8k deployed (80%)
-    portfolio = _make_portfolio(total_value=10_000, cash=2_000)
+    # Directly seed committed collateral to simulate 5 open CSPs at $1,600
+    rm._committed_csp_collateral = 8_000.0
+
+    # Now attempt a new $2,000 trade — would bring committed to $10,000 = 100%
+    portfolio = _make_portfolio(total_value=10_000, cash=10_000)
     signal = _make_signal(collateral=2_000)
 
     result = rm.validate_signal(signal, portfolio)
@@ -56,8 +59,11 @@ def test_allows_trade_within_80_pct_cap():
     from risk.risk_manager import RiskManager
 
     rm = RiskManager(max_total_deployed_pct=0.80)
-    # total=$10k, cash=$3.6k → currently $6.4k deployed (64%)
-    portfolio = _make_portfolio(total_value=10_000, cash=3_600)
+    # Directly seed committed collateral to simulate 4 open CSPs at $1,600 each
+    rm._committed_csp_collateral = 6_400.0
+
+    # New $1,500 trade → committed would be $7,900 = 79% → allowed
+    portfolio = _make_portfolio(total_value=10_000, cash=10_000)
     signal = _make_signal(collateral=1_500)
 
     result = rm.validate_signal(signal, portfolio)
@@ -91,13 +97,15 @@ def test_non_sell_put_skips_collateral_check():
 
 
 def test_exactly_at_cap_is_rejected():
-    """Exactly 80% deployed + a trade that would push to 100% should be rejected."""
+    """Exactly 80% deployed + a trade that would push over should be rejected."""
     from risk.risk_manager import RiskManager
 
     rm = RiskManager(max_total_deployed_pct=0.80)
-    # $8,000 deployed out of $10,000 = exactly 80% — at the limit
-    portfolio = _make_portfolio(total_value=10_000, cash=2_000)
+    # Directly seed committed collateral to exactly 80% of $10k
+    rm._committed_csp_collateral = 8_000.0
+
     # Any positive collateral now would exceed 80%
+    portfolio = _make_portfolio(total_value=10_000, cash=10_000)
     signal = _make_signal(collateral=1)  # even $1 more should reject
 
     result = rm.validate_signal(signal, portfolio)
@@ -128,3 +136,29 @@ def test_no_collateral_in_metadata_skips_check():
         (c for c in result.checks if c.name == "collateral_cap"), None
     )
     assert collateral_check is None
+
+
+def test_collateral_cap_blocks_when_csp_cash_stays_in_portfolio():
+    """
+    Real wheel account: CSP cash stays in portfolio (not debited until assignment).
+    Simulate 3 already-approved CSPs totalling $8,000 committed on $10k account.
+    A new $2,500 trade must be rejected (would bring total to $10,500 = 105%).
+    """
+    from risk.risk_manager import RiskManager
+
+    rm = RiskManager(max_total_deployed_pct=0.80)
+
+    # Directly seed committed collateral: 3 CSPs totalling $8,000 (2k + 3k + 3k)
+    # Cash stays at $10k (CSP doesn't debit cash in a wheel account)
+    rm._committed_csp_collateral = 8_000.0
+
+    # Now try a new $2,500 CSP — total committed = $10,500 > 80% of $10k
+    portfolio_full_cash = _make_portfolio(total_value=10_000, cash=10_000)
+    new_signal = _make_signal(collateral=2_500)
+
+    result = rm.validate_signal(new_signal, portfolio_full_cash)
+
+    assert result.approved is False, "Must be blocked — committed collateral already at 80%"
+    collateral_check = next((c for c in result.checks if c.name == "collateral_cap"), None)
+    assert collateral_check is not None
+    assert collateral_check.passed is False
