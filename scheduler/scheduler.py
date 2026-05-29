@@ -173,6 +173,14 @@ class TradingScheduler:
             id="midday_thesis",
         )
 
+        # Pre-market gap-down risk scan at 8:15 AM
+        self._scheduler.add_job(
+            self._check_gap_downs,
+            CronTrigger(hour=8, minute=15, day_of_week="mon-fri", timezone=tz),
+            id="gap_down_check",
+            replace_existing=True,
+        )
+
         logger.info("TradingScheduler configured")
 
     async def run(self) -> None:
@@ -690,6 +698,79 @@ class TradingScheduler:
                         alerter.alert(f"[Thesis Warning] {sym}: {thesis[:200]}")
             except Exception as e:
                 logger.warning(f"[Thesis] {sym} check failed: {e}")
+
+    async def _check_gap_downs(self) -> None:
+        """8:15 AM: scan open CSP positions for overnight gap-down risk."""
+        logger.info("[Scheduler] Gap-down check starting")
+
+        for strategy in self._strategies:
+            if not hasattr(strategy, "get_open_csp_positions"):
+                continue
+            for symbol, wheel_pos in strategy.get_open_csp_positions().items():
+                try:
+                    csp = wheel_pos.csp_position
+                    if csp is None or csp.underlying_price_at_entry is None:
+                        continue
+
+                    entry_price = float(csp.underlying_price_at_entry)
+                    if entry_price <= 0:
+                        continue
+
+                    current_price = await self._get_current_price(symbol)
+                    if current_price is None:
+                        continue
+
+                    pct_change = (current_price - entry_price) / entry_price
+
+                    if pct_change <= -0.10:
+                        msg = (
+                            f"GAP-DOWN ALERT — {symbol}: down {pct_change:.1%} from "
+                            f"entry ${entry_price:.2f} (now ${current_price:.2f}). "
+                            f"Manual review required before trading."
+                        )
+                        logger.warning(f"[GapDown] {msg}")
+                        try:
+                            log_decision({
+                                "stage": "gap_down_check",
+                                "symbol": symbol,
+                                "current_price": current_price,
+                                "entry_price": entry_price,
+                                "pct_change": round(pct_change, 4),
+                                "flags": [f"down {pct_change:.1%} from entry"],
+                                "action": "manual_review_flagged",
+                            })
+                        except Exception as log_exc:
+                            logger.warning(f"[GapDown] Decision log write failed for {symbol}: {log_exc}")
+                        try:
+                            from monitoring.alerting import AlertLevel
+                            alerter.alert(
+                                "gap_down",
+                                msg,
+                                level=AlertLevel.WARNING,
+                            )
+                        except Exception as alert_exc:
+                            logger.warning(f"[GapDown] Alert send failed for {symbol}: {alert_exc}")
+                    else:
+                        logger.debug(f"[GapDown] {symbol}: {pct_change:.1%} from entry — no flag")
+
+                except Exception as exc:
+                    logger.warning(f"[GapDown] Check failed for {symbol}: {exc}")
+
+    async def _get_current_price(self, symbol: str) -> float | None:
+        """Fetch the most recent closing price for a symbol via HistoricalDataFetcher."""
+        try:
+            loop = asyncio.get_event_loop()
+            df = await loop.run_in_executor(
+                None,
+                lambda: self._fetcher.fetch_recent_bars(symbol, days=2, timeframe="1Day"),
+            )
+            if df is None or df.empty:
+                logger.warning(f"[GapDown] No price data returned for {symbol}")
+                return None
+            return float(df["close"].iloc[-1])
+        except Exception as exc:
+            logger.warning(f"[GapDown] Price fetch failed for {symbol}: {exc}")
+            return None
 
     def _write_research_log(self, research: dict, themes: list[str]) -> None:
         """Append today's research summary to data/research_log.md (keep last 5 days)."""

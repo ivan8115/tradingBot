@@ -119,6 +119,7 @@ monitoring:
     - drawdown_breach
     - fill
     - daily_summary
+    - gap_down
 
 claude:
   enabled: true

@@ -453,6 +453,14 @@ class WheelStrategy(Strategy):
 
         self.symbols = list(self._positions.keys())
 
+    def get_open_csp_positions(self) -> dict:
+        """Return positions currently holding an open CSP (in CSP_OPEN state)."""
+        return {
+            sym: pos
+            for sym, pos in self._positions.items()
+            if pos.state == WheelState.CSP_OPEN and pos.csp_position is not None
+        }
+
     def get_state(self) -> dict:
         return {
             sym: {
