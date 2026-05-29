@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -16,6 +17,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from core.config import settings
+from core.decision_log import log_decision
 from core.events import SignalEvent
 
 
@@ -153,6 +155,7 @@ class TradingAdvisor:
                     response_model=PreMarketBriefing,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_briefing,
+                    stage="llm/pre_market_briefing",
                 ),
                 timeout=self._cfg.briefing_timeout_seconds,
             )
@@ -206,6 +209,13 @@ class TradingAdvisor:
                     response_model=SignalEvalResult,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_signal,
+                    session_id=signal.metadata.get("session_id") if hasattr(signal, "metadata") else None,
+                    symbol=signal.symbol,
+                    stage="llm/evaluate_signal",
+                    shadow_decision={
+                        "approved": True,
+                        "reason": "mechanical_baseline_always_approves_generated_signals",
+                    },
                 ),
                 timeout=self._cfg.signal_eval_timeout_seconds,
             )
@@ -260,6 +270,13 @@ class TradingAdvisor:
                 "Target delta around -0.28, DTE 21-45 days, adequate bid/ask spread. "
                 "The contract_id MUST exactly match one in the list above."
             )
+            # Mechanical baseline: contract closest to target delta
+            _target_delta = -0.28
+            _mechanical = min(
+                (c for c in chain if c.get("delta") is not None),
+                key=lambda c: abs(c["delta"] - _target_delta),
+                default=None,
+            )
             result = await asyncio.wait_for(
                 self._call_structured(
                     model=self._cfg.opus_model,
@@ -268,6 +285,15 @@ class TradingAdvisor:
                     response_model=StrikeSelectionResult,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_signal,
+                    session_id=None,
+                    symbol=symbol,
+                    stage="llm/select_csp_strike",
+                    shadow_decision={
+                        "contract_id": _mechanical.get("contract_id") if _mechanical else None,
+                        "strike": _mechanical.get("strike") if _mechanical else None,
+                        "delta": _mechanical.get("delta") if _mechanical else None,
+                        "reason": "closest_to_target_delta_-0.28",
+                    },
                 ),
                 timeout=self._cfg.signal_eval_timeout_seconds,
             )
@@ -319,6 +345,7 @@ class TradingAdvisor:
                     response_model=DailyReview,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_review,
+                    stage="llm/daily_review",
                 ),
                 timeout=self._cfg.briefing_timeout_seconds,
             )
@@ -357,6 +384,7 @@ class TradingAdvisor:
                     response_model=WeeklyReview,
                     user_prompt=prompt,
                     max_tokens=self._cfg.max_tokens_review,
+                    stage="llm/weekly_review",
                 ),
                 timeout=self._cfg.briefing_timeout_seconds,
             )
@@ -428,10 +456,16 @@ class TradingAdvisor:
         response_model: type[BaseModel],
         user_prompt: str,
         max_tokens: int,
+        *,
+        session_id: str | None = None,
+        symbol: str | None = None,
+        stage: str | None = None,
+        shadow_decision: dict | None = None,
     ) -> Optional[Any]:
         client = self._build_client()
         tool_def = _model_to_tool(tool_name, tool_description, response_model)
 
+        start = time.monotonic()
         response = await client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -440,13 +474,35 @@ class TradingAdvisor:
             tool_choice={"type": "any"},
             messages=[{"role": "user", "content": user_prompt}],
         )
+        latency_ms = int((time.monotonic() - start) * 1000)
 
+        result = None
         for block in response.content:
             if block.type == "tool_use" and block.name == tool_name:
-                return response_model.model_validate(block.input)
+                result = response_model.model_validate(block.input)
+                break
 
-        logger.warning(f"[AI] No tool_use block in response for {tool_name}")
-        return None
+        try:
+            record: dict = {
+                "session_id": session_id,
+                "stage": stage or f"llm/{tool_name}",
+                "symbol": symbol,
+                "model": model,
+                "latency_ms": latency_ms,
+                "input_tokens": getattr(getattr(response, "usage", None), "input_tokens", None),
+                "output_tokens": getattr(getattr(response, "usage", None), "output_tokens", None),
+                "prompt_preview": user_prompt[:500],
+                "result_preview": str(result)[:500] if result else None,
+            }
+            if shadow_decision is not None:
+                record["shadow_decision"] = shadow_decision
+            log_decision(record)
+        except Exception as _log_exc:
+            logger.debug(f"[AI] decision log write failed: {_log_exc}")
+
+        if result is None:
+            logger.warning(f"[AI] No tool_use block in response for {tool_name}")
+        return result
 
     def _reset_eval_counter_if_new_day(self) -> None:
         today = date.today()

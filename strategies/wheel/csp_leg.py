@@ -50,6 +50,7 @@ class CSPPosition:
     opened_at: datetime
     contracts: int = 1              # number of contracts (each = 100 shares)
     cost_basis: Optional[Decimal] = None  # set if assigned
+    underlying_price_at_entry: Optional[Decimal] = None  # underlying price when CSP was opened
 
     @property
     def max_profit(self) -> Decimal:
@@ -85,6 +86,7 @@ class CashSecuredPutLeg:
 
     def __init__(self, config: CSPConfig) -> None:
         self._cfg = config
+        self._symbol_pain_thresholds: dict[str, float] = {}
 
     def select_strike(
         self,
@@ -162,30 +164,57 @@ class CashSecuredPutLeg:
         self,
         position: CSPPosition,
         current_contract_price: Decimal,
+        current_underlying: Decimal | None = None,
+        dte: int | None = None,
     ) -> tuple[bool, str]:
         """
-        Check if we should close the CSP before expiry.
+        Two-tier exit for short puts.
+        Returns (should_close, rule_that_triggered).
 
-        Close when:
+        Exit rules (checked in order):
         1. Profit target reached (e.g. 50% of max profit)
-        2. Stop loss triggered (2× premium received)
-        3. DTE ≤ 7 (risk of gamma explosion near expiry)
+        2. Tier 1 soft stop: mark >= 2.5× credit AND underlying < strike
+           (avoids spurious exits from IV expansion when position is directionally fine)
+        3. Tier 2 pain threshold: underlying < strike × pain_threshold
+           (directional problem regardless of option price)
+        4. DTE roll: DTE <= roll_when_dte
         """
         profit_pct = position.profit_pct(current_contract_price)
 
-        # Take profit
+        # Profit target
         if profit_pct >= self._cfg.profit_target_pct:
-            return True, f"Profit target: {profit_pct*100:.0f}% of max"
+            return True, f"profit_target: {profit_pct*100:.0f}% of max"
 
-        # Stop loss
-        pnl = position.unrealized_pnl(current_contract_price)
-        stop_threshold = -self._cfg.stop_loss_multiplier * float(position.max_profit)
-        if float(pnl) <= stop_threshold:
-            return True, f"Stop loss: lost {abs(float(pnl)):.2f} (>{self._cfg.stop_loss_multiplier}× premium)"
+        # Tier 1: soft stop — mark >= 2.5× credit AND underlying is below strike
+        soft_stop_threshold = position.premium_received * Decimal("2.5")
+        if (
+            current_underlying is not None
+            and current_contract_price >= soft_stop_threshold
+            and current_underlying < position.contract.strike
+        ):
+            return True, (
+                f"soft_stop_2.5x: mark=${current_contract_price:.2f} >= "
+                f"2.5x credit=${soft_stop_threshold:.2f}, "
+                f"underlying=${current_underlying:.2f} < strike=${position.contract.strike:.2f}"
+            )
 
-        # DTE threshold — close or roll
-        if position.contract.dte <= self._cfg.roll_when_dte:
-            return True, f"DTE={position.contract.dte} <= {self._cfg.roll_when_dte} — closing for roll"
+        # Tier 2: pain threshold — underlying dropped too far regardless of option price
+        if current_underlying is not None:
+            pain_pct = self._symbol_pain_thresholds.get(
+                position.symbol, self._cfg.pain_threshold_default
+            )
+            pain_price = position.contract.strike * Decimal(str(pain_pct))
+            if current_underlying < pain_price:
+                return True, (
+                    f"pain_threshold_{pain_pct:.0%}: "
+                    f"underlying=${current_underlying:.2f} < "
+                    f"strike*{pain_pct:.0%}=${pain_price:.2f}"
+                )
+
+        # DTE roll
+        effective_dte = dte if dte is not None else position.contract.dte
+        if effective_dte <= self._cfg.roll_when_dte:
+            return True, f"dte_roll: {effective_dte} <= {self._cfg.roll_when_dte}"
 
         return False, ""
 

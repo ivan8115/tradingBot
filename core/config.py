@@ -32,7 +32,7 @@ class UniverseConfig(BaseModel):
 class RiskConfig(BaseModel):
     max_portfolio_risk_pct: float = 0.02
     max_drawdown_pct: float = 0.15
-    max_single_position_pct: float = 0.10
+    max_single_position_pct: float = 0.20
     max_delta_exposure: int = 500
     daily_loss_limit_pct: float = 0.03
     position_sizing_method: Literal["kelly", "fixed_fraction", "percent_equity"] = "kelly"
@@ -49,6 +49,7 @@ class CSPConfig(BaseModel):
     min_premium: float = 1.00
     min_iv_rank: float = 50.0
     roll_when_dte: int = 7       # close/roll when DTE reaches this threshold
+    pain_threshold_default: float = 0.85  # Close if underlying < strike × this value
 
 
 class CCConfig(BaseModel):
@@ -59,11 +60,16 @@ class CCConfig(BaseModel):
     roll_when_dte: int = 7
 
 
+class WheelSymbolOverride(BaseModel):
+    pain_threshold: float | None = None
+
+
 class WheelStrategyConfig(BaseModel):
     enabled: bool = True
     symbols: list[str] = []
     csp: CSPConfig = Field(default_factory=CSPConfig)
     cc: CCConfig = Field(default_factory=CCConfig)
+    symbol_overrides: dict[str, WheelSymbolOverride] = Field(default_factory=dict)
 
 
 class MomentumStrategyConfig(BaseModel):
@@ -156,7 +162,7 @@ class GuardrailsConfig(BaseModel):
     max_open_positions: int = 6
     max_new_trades_per_week: int = 3
     max_position_pct: float = 0.20
-    target_deployment_pct: float = 0.80
+    max_total_deployed_pct: float = 0.80
 
 
 class ClaudeConfig(BaseModel):

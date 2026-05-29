@@ -6,11 +6,13 @@ All signals must pass through here. If any check fails, the signal is rejected.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 
 from loguru import logger
 
 from core.config import settings
+from core.decision_log import log_decision
 from core.events import SignalEvent
 from data.market_regime import Regime
 from portfolio.portfolio import Portfolio
@@ -46,16 +48,28 @@ class RiskManager:
         max_single_position_pct: float | None = None,
         daily_loss_limit_pct: float | None = None,
         max_delta_exposure: int | None = None,
+        max_total_deployed_pct: float | None = None,
     ) -> None:
         cfg = settings.risk
+        guardrails = settings.guardrails
         self._max_drawdown = max_drawdown_pct or cfg.max_drawdown_pct
-        self._max_position_pct = max_single_position_pct or cfg.max_single_position_pct
+        self._max_position_pct = max_single_position_pct or guardrails.max_position_pct
         self._daily_loss_pct = daily_loss_limit_pct or cfg.daily_loss_limit_pct
         self._max_delta = max_delta_exposure or cfg.max_delta_exposure
+        self._max_weekly_momentum = cfg.max_weekly_momentum_trades
+        self._max_total_deployed_pct = max_total_deployed_pct or guardrails.max_total_deployed_pct
+
+        # Global guardrails (Nate's rules — applies across ALL strategies)
+        self._max_open_positions = guardrails.max_open_positions
+        self._max_total_weekly_trades = guardrails.max_new_trades_per_week
+        self._total_new_trades_this_week: int = 0
+        self._global_week_iso: int = -1
 
         self._daily_start_value: Decimal | None = None
         self._net_portfolio_delta: float = 0.0
         self._regime: Regime = Regime.NEUTRAL
+        self._momentum_trades_this_week: int = 0
+        self._week_iso: int = -1
 
     def validate_signal(
         self,
@@ -71,6 +85,11 @@ class RiskManager:
 
         checks.append(self._check_drawdown(portfolio))
         checks.append(self._check_daily_loss(portfolio))
+
+        collateral_check = self._check_total_collateral(signal, portfolio)
+        if collateral_check is not None:
+            checks.append(collateral_check)
+
         checks.append(self._check_position_concentration(signal, portfolio, current_price))
 
         # Only check delta for options signals
@@ -82,7 +101,23 @@ class RiskManager:
         if signal.signal_type in ("ENTRY_LONG", "ENTRY_SHORT"):
             checks.append(self._check_risk_reward(signal, current_price))
 
+        _entry_signal_types = ("ENTRY_LONG", "ENTRY_SHORT", "SELL_PUT", "SELL_CALL")
+        if signal.signal_type in _entry_signal_types:
+            checks.append(self._check_global_position_count(portfolio))
+            checks.append(self._check_global_weekly_trades())
+
+        if signal.strategy_id == "momentum" and signal.signal_type in ("ENTRY_LONG", "ENTRY_SHORT"):
+            checks.append(self._check_weekly_trade_count())
+
         approved = all(c.passed for c in checks)
+
+        if approved and signal.signal_type in _entry_signal_types:
+            self._reset_global_week_counter_if_needed()
+            self._total_new_trades_this_week += 1
+
+        if approved and signal.strategy_id == "momentum" and signal.signal_type in ("ENTRY_LONG", "ENTRY_SHORT"):
+            self._reset_week_counter_if_needed()
+            self._momentum_trades_this_week += 1
 
         if not approved:
             failed = [c for c in checks if not c.passed]
@@ -96,6 +131,20 @@ class RiskManager:
                 f"[RiskManager] Signal APPROVED: {signal.strategy_id} "
                 f"{signal.signal_type} {signal.symbol}"
             )
+
+        try:
+            log_decision({
+                "session_id": signal.metadata.get("session_id") if isinstance(signal.metadata, dict) else None,
+                "stage": "risk_manager",
+                "symbol": signal.symbol,
+                "signal_type": signal.signal_type,
+                "strategy_id": signal.strategy_id,
+                "approved": approved,
+                "reason": next((c.reason for c in checks if not c.passed), None),
+                "checks": [{"name": c.name, "passed": c.passed, "reason": c.reason} for c in checks],
+            })
+        except Exception as _log_exc:
+            logger.debug(f"[RiskManager] decision log write failed: {_log_exc}")
 
         return ValidationResult(approved=approved, checks=checks)
 
@@ -140,6 +189,36 @@ class RiskManager:
                 reason=f"Daily loss limit: {daily_loss*100:.1f}% >= {self._daily_loss_pct*100:.1f}%",
             )
         return RiskCheck(name="daily_loss", passed=True)
+
+    def _check_total_collateral(
+        self, signal: SignalEvent, portfolio: Portfolio
+    ) -> RiskCheck | None:
+        """For SELL_PUT only: reject if total locked collateral would exceed the cap.
+
+        Returns None when the check doesn't apply (non-SELL_PUT signals or missing metadata),
+        so the caller can skip adding it to the checks list entirely.
+        """
+        if signal.signal_type != "SELL_PUT":
+            return None
+        proposed = float(signal.metadata.get("collateral", 0))
+        if not proposed:
+            return None
+        total_value = float(portfolio.total_value())
+        if total_value == 0:
+            return None
+        currently_deployed = total_value - float(portfolio.cash)
+        projected_pct = (currently_deployed + proposed) / total_value
+        if projected_pct > self._max_total_deployed_pct:
+            return RiskCheck(
+                name="collateral_cap",
+                passed=False,
+                reason=(
+                    f"Collateral cap: deploying ${proposed:,.0f} would bring total to "
+                    f"{projected_pct:.1%} (limit {self._max_total_deployed_pct:.0%}). "
+                    f"Currently deployed: ${currently_deployed:,.0f} / ${total_value:,.0f}."
+                ),
+            )
+        return RiskCheck(name="collateral_cap", passed=True)
 
     def _check_position_concentration(
         self,
@@ -217,6 +296,58 @@ class RiskManager:
                 reason=f"R:R {rr:.2f}x below minimum 2.0x (reward={reward:.2f}, risk={risk:.2f})",
             )
         return RiskCheck(name="risk_reward", passed=True)
+
+    def _reset_week_counter_if_needed(self) -> None:
+        current_week = date.today().isocalendar()[1]
+        if current_week != self._week_iso:
+            self._momentum_trades_this_week = 0
+            self._week_iso = current_week
+
+    def _check_weekly_trade_count(self) -> RiskCheck:
+        self._reset_week_counter_if_needed()
+        if self._momentum_trades_this_week >= self._max_weekly_momentum:
+            return RiskCheck(
+                name="weekly_momentum_cap",
+                passed=False,
+                reason=(
+                    f"Weekly momentum trade cap reached: "
+                    f"{self._momentum_trades_this_week}/{self._max_weekly_momentum}"
+                ),
+            )
+        return RiskCheck(name="weekly_momentum_cap", passed=True)
+
+    def _reset_global_week_counter_if_needed(self) -> None:
+        current_week = date.today().isocalendar()[1]
+        if current_week != self._global_week_iso:
+            self._total_new_trades_this_week = 0
+            self._global_week_iso = current_week
+
+    def _check_global_position_count(self, portfolio: Portfolio) -> RiskCheck:
+        """Block new entries when total open positions >= guardrails.max_open_positions."""
+        count = len(portfolio.positions)
+        if count >= self._max_open_positions:
+            return RiskCheck(
+                name="global_position_count",
+                passed=False,
+                reason=(
+                    f"Max open positions reached: {count}/{self._max_open_positions}"
+                ),
+            )
+        return RiskCheck(name="global_position_count", passed=True)
+
+    def _check_global_weekly_trades(self) -> RiskCheck:
+        """Block new entries when total new trades this week >= guardrails.max_new_trades_per_week."""
+        self._reset_global_week_counter_if_needed()
+        if self._total_new_trades_this_week >= self._max_total_weekly_trades:
+            return RiskCheck(
+                name="global_weekly_trades",
+                passed=False,
+                reason=(
+                    f"Global weekly trade cap reached: "
+                    f"{self._total_new_trades_this_week}/{self._max_total_weekly_trades}"
+                ),
+            )
+        return RiskCheck(name="global_weekly_trades", passed=True)
 
     def _check_regime(self, signal: SignalEvent) -> RiskCheck:
         """Reject new entries when market regime is BEARISH."""

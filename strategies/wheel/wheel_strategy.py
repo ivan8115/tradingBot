@@ -12,6 +12,7 @@ State transitions are driven by FillEvents (not BarEvents) for exactness.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -23,6 +24,7 @@ from loguru import logger
 from analysis.greeks import iv_rank
 from analysis.indicators import TechnicalIndicators
 from core.config import WheelStrategyConfig, settings
+from core.decision_log import log_decision
 from core.events import BarEvent, FillEvent, SignalEvent
 from strategies.base import Strategy
 from strategies.wheel.covered_call_leg import CCPosition, CoveredCallLeg
@@ -50,6 +52,8 @@ class WheelPosition:
     # Cached options chain (refreshed periodically)
     cached_chain: list[OptionContract] = field(default_factory=list)
     iv_history: list[float] = field(default_factory=list)
+    # AI pre-selected strike — set by scheduler before on_bar(), consumed once
+    ai_preferred_contract_id: Optional[str] = None
 
 
 class WheelStrategy(Strategy):
@@ -64,12 +68,22 @@ class WheelStrategy(Strategy):
         self,
         symbols: list[str],
         config: WheelStrategyConfig | None = None,
+        advisor=None,
     ) -> None:
         super().__init__(symbols)
         cfg = config or settings.strategies.wheel
         self._cfg = cfg
         self._csp_leg = CashSecuredPutLeg(cfg.csp)
         self._cc_leg = CoveredCallLeg(cfg.cc)
+        self._advisor = advisor
+
+        # Populate per-symbol pain thresholds from config symbol_overrides
+        overrides = getattr(cfg, "symbol_overrides", {})
+        self._csp_leg._symbol_pain_thresholds = {
+            sym: float(ov.pain_threshold)
+            for sym, ov in overrides.items()
+            if ov.pain_threshold is not None
+        }
 
         # One WheelPosition per symbol
         self._positions: dict[str, WheelPosition] = {
@@ -113,6 +127,10 @@ class WheelStrategy(Strategy):
             pos.total_premium_collected += fill.fill_price
             pos.cycle_start = fill.filled_at
             logger.info(f"[Wheel] {sym}: CSP opened @ ${fill.fill_price} premium")
+            if pos.csp_position:
+                underlying_price = fill.metadata.get("underlying_price") if isinstance(fill.metadata, dict) else None
+                if underlying_price:
+                    pos.csp_position.underlying_price_at_entry = Decimal(str(underlying_price))
 
         elif leg == "csp_close" and fill.side == "buy":
             # CSP bought back — profit taken or stop hit
@@ -172,6 +190,8 @@ class WheelStrategy(Strategy):
         SCANNING state: look for a valid CSP entry.
         We need the options chain from pos.cached_chain (refreshed externally).
         """
+        session_id = str(uuid.uuid4())
+
         if not pos.cached_chain:
             # No chain available yet — wait for scheduler to populate
             return []
@@ -190,18 +210,53 @@ class WheelStrategy(Strategy):
 
         # Check IV Rank threshold
         if iv_rank_val < self._cfg.csp.min_iv_rank:
+            try:
+                log_decision({
+                    "session_id": session_id,
+                    "stage": "wheel/mechanical_filter",
+                    "symbol": bar.symbol,
+                    "decision": "reject",
+                    "reason": "iv_rank_below_threshold",
+                    "iv_rank": iv_rank_val,
+                    "threshold": self._cfg.csp.min_iv_rank,
+                })
+            except Exception as _log_exc:
+                logger.debug(f"[Wheel] decision log write failed: {_log_exc}")
             return []
 
         # Trend must be neutral or bullish
         trend = self._get_trend(bar.symbol)
         if trend == "downtrend":
+            try:
+                log_decision({
+                    "session_id": session_id,
+                    "stage": "wheel/mechanical_filter",
+                    "symbol": bar.symbol,
+                    "decision": "reject",
+                    "reason": "downtrend",
+                })
+            except Exception as _log_exc:
+                logger.debug(f"[Wheel] decision log write failed: {_log_exc}")
             return []
 
-        # Select strike
-        contract = self._csp_leg.select_strike(
-            chain=pos.cached_chain,
-            underlying_price=float(bar.close),
-        )
+        # Select strike — use AI pre-selection if available, else fall back to mechanical
+        ai_strike_reasoning = ""
+        contract = None
+        if pos.ai_preferred_contract_id:
+            contract = next(
+                (c for c in pos.cached_chain if c.contract_id == pos.ai_preferred_contract_id),
+                None,
+            )
+            if contract:
+                ai_strike_reasoning = "AI-selected strike"
+            pos.ai_preferred_contract_id = None  # consume — one-shot
+
+        if contract is None:
+            contract = self._csp_leg.select_strike(
+                chain=pos.cached_chain,
+                underlying_price=float(bar.close),
+            )
+
         if not contract:
             return []
 
@@ -213,9 +268,28 @@ class WheelStrategy(Strategy):
             f"DTE={contract.dte} | "
             f"Delta={contract.delta:.2f} | "
             f"Premium=${contract.mid:.2f}"
+            + (f" | {ai_strike_reasoning}" if ai_strike_reasoning else "")
         )
 
         greeks_delta = contract.delta  # already computed from chain
+
+        try:
+            log_decision({
+                "session_id": session_id,
+                "stage": "wheel/entry_signal",
+                "symbol": bar.symbol,
+                "contract_id": contract.contract_id,
+                "strike": float(contract.strike),
+                "dte": contract.dte,
+                "delta": contract.delta,
+                "iv": getattr(contract, "iv", None),
+                "premium": float(contract.mid),
+                "collateral": float(contract.strike * 100),
+                "iv_rank": iv_rank_val,
+                "ai_selected": bool(ai_strike_reasoning),
+            })
+        except Exception as _log_exc:
+            logger.debug(f"[Wheel] decision log write failed: {_log_exc}")
 
         return [SignalEvent(
             strategy_id=self.strategy_id,
@@ -232,6 +306,9 @@ class WheelStrategy(Strategy):
                 "delta": greeks_delta,
                 "premium": float(contract.mid),
                 "iv_rank": iv_rank_val,
+                "ai_strike_reasoning": ai_strike_reasoning,
+                "collateral": float(contract.strike * 100),  # cash locked to secure this put
+                "session_id": session_id,
             },
         )]
 
@@ -247,7 +324,12 @@ class WheelStrategy(Strategy):
         if current_price is None:
             return []
 
-        should_close, reason = self._csp_leg.should_close_early(pos.csp_position, current_price)
+        should_close, reason = self._csp_leg.should_close_early(
+            pos.csp_position,
+            current_contract_price=current_price,
+            current_underlying=bar.close,
+            dte=pos.csp_position.contract.dte,
+        )
         if should_close:
             logger.info(f"[Wheel] {bar.symbol}: Closing CSP — {reason}")
             return [SignalEvent(
@@ -370,6 +452,14 @@ class WheelStrategy(Strategy):
             logger.info(f"[Wheel] Removed idle symbol from watchlist: {sym}")
 
         self.symbols = list(self._positions.keys())
+
+    def get_open_csp_positions(self) -> dict:
+        """Return positions currently holding an open CSP (in CSP_OPEN state)."""
+        return {
+            sym: pos
+            for sym, pos in self._positions.items()
+            if pos.state == WheelState.CSP_OPEN and pos.csp_position is not None
+        }
 
     def get_state(self) -> dict:
         return {
