@@ -124,13 +124,14 @@ class SwingStrategy(Strategy):
 
         strength = self._compute_entry_strength(snap, stage)
 
-        # Soft earnings gate: halve strength if earnings are near (< 30 days)
-        if (
-            self._earnings_calendar is not None
-            and self._earnings_calendar.is_near_earnings(sym, min_days=30)
-        ):
-            logger.debug(f"[Swing] {sym} near earnings — reducing strength by 50%")
-            strength *= 0.5
+        # Two-tier earnings gate: hard block within 7 days, halve strength 7–30 days
+        if self._earnings_calendar is not None:
+            if self._earnings_calendar.is_near_earnings(sym, min_days=7):
+                logger.info(f"[Swing] {sym}: blocked — earnings within 7 days")
+                return []
+            if self._earnings_calendar.is_near_earnings(sym, min_days=30):
+                logger.debug(f"[Swing] {sym}: near earnings (7–30 days) — reducing strength by 50%")
+                strength *= 0.5
 
         logger.info(
             f"[Swing] ENTRY LONG {sym} | Stage={stage.value} "
