@@ -1,10 +1,21 @@
 # Operations Guide
 
+## Starting and stopping the bot
+
+```bash
+# Start in background (logs to logs/bot.log)
+nohup .venv/bin/python main.py trade --mode paper > logs/bot.log 2>&1 &
+echo "PID: $!"
+
+# Stop
+kill $(pgrep -f "main.py trade")
+```
+
 ## Reading logs
 
 ### Main log (human-readable)
 ```bash
-tail -f logs/tradingbot_$(date +%Y-%m-%d).log
+tail -f logs/bot.log
 ```
 
 ### Decision log (structured JSONL)
@@ -65,6 +76,9 @@ monitoring:
     - drawdown_breach
     - fill
     - daily_summary
+    - daily_review       # AI daily review grade + summary
+    - weekly_review      # AI weekly performance review
+    - thesis_warning     # Midday research flagged a negative catalyst
 ```
 
 ## Per-symbol pain thresholds

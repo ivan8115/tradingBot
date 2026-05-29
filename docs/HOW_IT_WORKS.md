@@ -54,9 +54,13 @@ Nothing trades unless all five layers agree.
 | Max new trades/week | 3 |
 | Target holding period | 21–45 days |
 | Target delta | ~0.28 (moderately out of the money) |
+| IV Rank minimum | 40 (measured from real ATM options chain IV) |
 | Profit target | 50% of premium collected |
-| Soft stop | 2.5× premium AND underlying below strike |
-| Pain threshold | Underlying < strike × 0.85 (AMD/MARA: 0.80) |
+| Soft stop (Tier 1) | 2.5× premium AND underlying below strike |
+| Mark stop (Tier 1.5) | 3× premium regardless of stock direction (IV spike protection) |
+| Pain threshold (Tier 2) | Underlying < strike × 0.85 (AMD/MARA: 0.80) |
+| Covered call stock stop | Underlying < cost basis × 0.90 after assignment |
+| Earnings gate | Hard block within 7 days; 50% strength reduction within 30 days |
 
 ---
 
@@ -64,9 +68,12 @@ Nothing trades unless all five layers agree.
 
 The main risk is getting assigned on a stock that then **keeps falling and doesn't recover**. You're stuck holding 100 shares worth less than you paid. The bot manages this by:
 - Only targeting stocks it's willing to own (quality filter)
-- Avoiding earnings windows
+- Hard-blocking new entries within 7 days of earnings (reducing strength within 30 days)
+- Three-tier exit system: profit target, mark stop (3× credit), pain threshold (15% below strike)
+- After assignment, covered calls exit if the stock falls more than 10% below cost basis
 - Halting all trading if drawdown hits 15%
 - Limiting position size to 20% of account per trade
+- Capping total committed CSP collateral at 80% of account
 
 ---
 

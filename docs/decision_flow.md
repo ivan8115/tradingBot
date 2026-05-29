@@ -29,7 +29,7 @@ All decisions are logged to `logs/decisions/YYYY-MM-DD.jsonl` with the stage nam
 **Checks (in order):**
 1. Max drawdown (15% halt)
 2. Daily loss limit (3%)
-3. Total collateral cap (80% of account)
+3. Total collateral cap (80% of account) — tracked as committed CSP collateral internally; not derived from portfolio cash (which stays flat for cash-secured puts until assignment)
 4. Position concentration (20% per symbol)
 5. Net delta exposure (±500)
 6. Market regime (no entries in BEARISH)
@@ -42,11 +42,20 @@ All decisions are logged to `logs/decisions/YYYY-MM-DD.jsonl` with the stage nam
 **Checks:** qty > 0, contract_id valid, Alpaca accepts the order
 **On fill:** `on_fill()` transitions wheel state machine
 
-## Exit Monitoring (ongoing, not an entry gate)
-**File:** `strategies/wheel/wheel_strategy.py` → `_manage_csp()`
-**Triggers:**
-- Profit target: mark ≤ 50% of premium received
-- Soft stop: mark ≥ 2.5× credit AND underlying < strike (directional move confirmed)
-- Pain threshold: underlying < strike × 0.85 (AMD/MARA: 0.80)
-- DTE roll: contract ≤ 7 DTE
+## CSP Exit Monitoring (ongoing, not an entry gate)
+**File:** `strategies/wheel/wheel_strategy.py` → `_manage_csp()` → `csp_leg.should_close_early()`
+**Triggers (checked in order):**
+1. **Profit target:** mark ≤ 50% of premium received
+2. **Tier 1 soft stop:** mark ≥ 2.5× credit AND underlying < strike (directional move confirmed)
+3. **Mark stop (Tier 1.5):** mark ≥ 3× credit regardless of stock direction (catches pure IV-spike events where Tier 1's AND-logic won't fire)
+4. **Pain threshold (Tier 2):** underlying < strike × 0.85 (AMD/MARA: 0.80)
+5. **DTE roll:** contract ≤ 7 DTE
 **Log stage:** `wheel/csp_exit` (on trigger)
+
+## Covered Call Exit Monitoring (ongoing, not an entry gate)
+**File:** `strategies/wheel/wheel_strategy.py` → `_manage_cc()` → `covered_call_leg.should_close_early()`
+**Triggers (checked in order):**
+1. **Profit target:** mark ≤ 50% of premium received
+2. **DTE roll:** contract ≤ 7 DTE
+3. **Stock stop loss:** underlying < stock cost basis × 0.90 (exits stock position if it falls more than 10% below purchase price)
+**Log stage:** `wheel/cc_exit` (on trigger)
