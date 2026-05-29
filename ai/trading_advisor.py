@@ -193,7 +193,7 @@ class TradingAdvisor:
                 f"  Metadata: {json.dumps(signal.metadata)}\n\n"
                 f"Market context:\n"
                 f"  Regime: {market_context.get('regime', 'unknown')}\n"
-                f"  Portfolio drawdown: {market_context.get('drawdown_pct', 0)*100:.1f}%\n"
+                f"  Portfolio drawdown: {market_context.get('drawdown_pct', 0):.1f}%\n"
                 f"  Daily P&L: {market_context.get('daily_pnl_pct', 0)*100:.1f}%\n"
                 f"  Risk posture: {market_context.get('risk_posture', 'normal')}\n"
                 f"  Open positions: {json.dumps(market_context.get('open_positions', []))}\n\n"

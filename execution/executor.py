@@ -132,6 +132,14 @@ class Executor:
                 f"| order_id={fill.order_id}"
             )
 
+    def record_rejected_signal(
+        self,
+        signal: SignalEvent,
+        rejection_reason: str,
+    ) -> None:
+        """Public API for recording AI-rejected or pre-execution rejections."""
+        self._save_signal(signal, approved=False, rejection_reason=rejection_reason)
+
     def _save_signal(
         self,
         signal: SignalEvent,

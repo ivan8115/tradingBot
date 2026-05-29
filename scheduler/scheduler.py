@@ -489,7 +489,7 @@ class TradingScheduler:
 
         market_context = {
             "regime": self._risk._regime.value,
-            "drawdown_pct": float(self._portfolio.drawdown()),
+            "drawdown_pct": float(self._portfolio.drawdown()) * 100,
             "daily_pnl_pct": self._get_daily_pnl_pct(),
             "risk_posture": self._briefing_posture,
             "open_positions": [
@@ -552,9 +552,8 @@ class TradingScheduler:
                             if not eval_result.approved:
                                 signal.metadata["ai_rejected"] = True
                                 signal.metadata["ai_reasoning"] = eval_result.reasoning
-                                self._executor._save_signal(
+                                self._executor.record_rejected_signal(
                                     signal,
-                                    approved=False,
                                     rejection_reason=f"AI: {eval_result.reasoning[:255]}",
                                 )
                                 ai_approved = False
