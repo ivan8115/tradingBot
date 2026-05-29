@@ -16,6 +16,7 @@ build/
 data/*.db
 data/*.sqlite3
 data/*.json
+data/research_log.md
 *.db
 *.sqlite3
 

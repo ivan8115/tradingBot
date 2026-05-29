@@ -244,8 +244,17 @@ def cmd_trade(args) -> None:
 
     if settings.strategies.wheel.enabled:
         from strategies.wheel.wheel_strategy import WheelStrategy
+        from ai.trading_advisor import advisor as ai_advisor
         wheel_syms = settings.strategies.wheel.symbols
-        strategies.append(WheelStrategy(wheel_syms))
+        strategies.append(WheelStrategy(wheel_syms, advisor=ai_advisor))
+
+    if settings.strategies.swing.enabled:
+        from strategies.swing.swing_strategy import SwingStrategy
+        from ai.trading_advisor import advisor as ai_advisor
+        from data.earnings_calendar import earnings_calendar
+        swing_syms = settings.strategies.swing.symbols
+        strategies.append(SwingStrategy(swing_syms, advisor=ai_advisor,
+                                        earnings_calendar=earnings_calendar))
 
     if not strategies:
         print("No strategies enabled. Check config.yaml.")

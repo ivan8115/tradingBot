@@ -32,6 +32,8 @@ dependencies = [
     "scipy>=1.12.0",
     # Timezone
     "pytz>=2024.1",
+    # AI / Claude API
+    "anthropic>=0.40.0",
 ]
 
 [project.optional-dependencies]
