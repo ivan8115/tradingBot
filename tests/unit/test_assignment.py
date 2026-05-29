@@ -88,3 +88,59 @@ async def test_assignment_with_missing_price_is_skipped():
     await stream._on_trade_update(update)
 
     assert received == []
+
+
+def test_csp_close_assignment_uses_correct_cost_basis_when_metadata_missing():
+    """
+    When a CSP closes via csp_close+assigned=True with NO cost_basis in metadata,
+    the fallback must use strike - premium_received (not the option buyback price).
+    """
+    from strategies.wheel.wheel_strategy import WheelStrategy, WheelState, WheelPosition
+    from strategies.wheel.csp_leg import CSPPosition, OptionContract, CashSecuredPutLeg
+    from core.config import CSPConfig
+    from unittest.mock import MagicMock, patch
+
+    with patch("strategies.wheel.wheel_strategy.settings") as ms:
+        ms.indicators.bar_window_size = 200
+        ms.strategies.wheel.csp.pain_threshold_default = 0.85
+        ms.strategies.wheel.csp.min_iv_rank = 40
+        w = WheelStrategy.__new__(WheelStrategy)
+        w.symbols = ["AMD"]
+        w.strategy_id = "wheel"
+        w._positions = {"AMD": WheelPosition(symbol="AMD")}
+        w._advisor = None
+
+    cfg_mock = MagicMock(spec=CSPConfig)
+    cfg_mock.pain_threshold_default = 0.85
+    w._csp_leg = CashSecuredPutLeg(cfg_mock)
+    # cc_leg not needed for this test
+    w._cc_leg = MagicMock()
+
+    contract = MagicMock(spec=OptionContract)
+    contract.strike = Decimal("28.00")
+    contract.dte = 0
+    pos = w._positions["AMD"]
+    pos.csp_position = CSPPosition(
+        symbol="AMD",
+        contract=contract,
+        premium_received=Decimal("1.20"),
+        opened_at=datetime.now(timezone.utc),
+    )
+    pos.state = WheelState.CSP_OPEN
+
+    fill = MagicMock(spec=FillEvent)
+    fill.strategy_id = "wheel"
+    fill.symbol = "AMD"
+    fill.side = "buy"
+    fill.fill_price = Decimal("5.50")   # option buyback price — WRONG as cost basis
+    fill.filled_qty = 100
+    fill.metadata = {"leg": "csp_close", "assigned": True}  # no cost_basis key
+
+    w.on_fill(fill)
+
+    expected = Decimal("28.00") - Decimal("1.20")  # strike - premium = $26.80
+    assert pos.stock_cost_basis == expected, (
+        f"Expected cost_basis={expected}, got {pos.stock_cost_basis}. "
+        "Fallback must use strike - premium, not option buyback price."
+    )
+    assert pos.state == WheelState.ASSIGNED

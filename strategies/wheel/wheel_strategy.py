@@ -136,12 +136,21 @@ class WheelStrategy(Strategy):
             # CSP bought back — profit taken or stop hit
             pnl = float(pos.csp_position.premium_received - fill.fill_price) * 100 if pos.csp_position else 0
             logger.info(f"[Wheel] {sym}: CSP closed | P&L ≈ ${pnl:+.2f}")
-            pos.csp_position = None
+
             if fill.metadata.get("assigned"):
+                # Compute cost basis BEFORE clearing csp_position
+                if fill.metadata.get("cost_basis"):
+                    cost_basis = Decimal(str(fill.metadata["cost_basis"]))
+                elif pos.csp_position:
+                    cost_basis = self._csp_leg.cost_basis_after_assignment(pos.csp_position)
+                else:
+                    cost_basis = fill.fill_price  # last-resort only
+                pos.csp_position = None
                 pos.state = WheelState.ASSIGNED
-                pos.stock_cost_basis = Decimal(str(fill.metadata.get("cost_basis", fill.fill_price)))
+                pos.stock_cost_basis = cost_basis
                 pos.stock_quantity = int(fill.metadata.get("quantity", 100))
             else:
+                pos.csp_position = None
                 pos.state = WheelState.SCANNING
 
         elif leg == "assignment":
