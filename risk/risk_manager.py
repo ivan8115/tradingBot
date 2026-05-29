@@ -134,7 +134,7 @@ class RiskManager:
 
         try:
             log_decision({
-                "session_id": signal.metadata.get("session_id") if hasattr(signal, "metadata") else None,
+                "session_id": signal.metadata.get("session_id") if isinstance(signal.metadata, dict) else None,
                 "stage": "risk_manager",
                 "symbol": signal.symbol,
                 "signal_type": signal.signal_type,

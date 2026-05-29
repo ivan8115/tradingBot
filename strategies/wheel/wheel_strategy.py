@@ -198,27 +198,33 @@ class WheelStrategy(Strategy):
 
         # Check IV Rank threshold
         if iv_rank_val < self._cfg.csp.min_iv_rank:
-            log_decision({
-                "session_id": session_id,
-                "stage": "wheel/mechanical_filter",
-                "symbol": bar.symbol,
-                "decision": "reject",
-                "reason": "iv_rank_below_threshold",
-                "iv_rank": iv_rank_val,
-                "threshold": self._cfg.csp.min_iv_rank,
-            })
+            try:
+                log_decision({
+                    "session_id": session_id,
+                    "stage": "wheel/mechanical_filter",
+                    "symbol": bar.symbol,
+                    "decision": "reject",
+                    "reason": "iv_rank_below_threshold",
+                    "iv_rank": iv_rank_val,
+                    "threshold": self._cfg.csp.min_iv_rank,
+                })
+            except Exception as _log_exc:
+                logger.debug(f"[Wheel] decision log write failed: {_log_exc}")
             return []
 
         # Trend must be neutral or bullish
         trend = self._get_trend(bar.symbol)
         if trend == "downtrend":
-            log_decision({
-                "session_id": session_id,
-                "stage": "wheel/mechanical_filter",
-                "symbol": bar.symbol,
-                "decision": "reject",
-                "reason": "downtrend",
-            })
+            try:
+                log_decision({
+                    "session_id": session_id,
+                    "stage": "wheel/mechanical_filter",
+                    "symbol": bar.symbol,
+                    "decision": "reject",
+                    "reason": "downtrend",
+                })
+            except Exception as _log_exc:
+                logger.debug(f"[Wheel] decision log write failed: {_log_exc}")
             return []
 
         # Select strike — use AI pre-selection if available, else fall back to mechanical
@@ -255,20 +261,23 @@ class WheelStrategy(Strategy):
 
         greeks_delta = contract.delta  # already computed from chain
 
-        log_decision({
-            "session_id": session_id,
-            "stage": "wheel/entry_signal",
-            "symbol": bar.symbol,
-            "contract_id": contract.contract_id,
-            "strike": float(contract.strike),
-            "dte": contract.dte,
-            "delta": contract.delta,
-            "iv": getattr(contract, "iv", None),
-            "premium": float(contract.mid),
-            "collateral": float(contract.strike * 100),
-            "iv_rank": iv_rank_val,
-            "ai_selected": bool(ai_strike_reasoning),
-        })
+        try:
+            log_decision({
+                "session_id": session_id,
+                "stage": "wheel/entry_signal",
+                "symbol": bar.symbol,
+                "contract_id": contract.contract_id,
+                "strike": float(contract.strike),
+                "dte": contract.dte,
+                "delta": contract.delta,
+                "iv": getattr(contract, "iv", None),
+                "premium": float(contract.mid),
+                "collateral": float(contract.strike * 100),
+                "iv_rank": iv_rank_val,
+                "ai_selected": bool(ai_strike_reasoning),
+            })
+        except Exception as _log_exc:
+            logger.debug(f"[Wheel] decision log write failed: {_log_exc}")
 
         return [SignalEvent(
             strategy_id=self.strategy_id,

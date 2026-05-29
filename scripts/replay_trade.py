@@ -19,7 +19,7 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=30, help="Days of logs to search (default 30)")
     args = parser.parse_args()
 
-    log_dir = Path("logs/decisions")
+    log_dir = Path(__file__).parent.parent / "logs" / "decisions"
     if not log_dir.exists():
         print("No decision logs found at logs/decisions/", file=sys.stderr)
         sys.exit(1)
@@ -33,7 +33,7 @@ def main() -> None:
         file_date = path.stem  # e.g. "2026-05-28"
         if file_date < cutoff_date:
             continue
-        for line in path.read_text().splitlines():
+        for line in path.open():
             if not line.strip():
                 continue
             try:
