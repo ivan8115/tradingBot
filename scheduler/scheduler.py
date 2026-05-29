@@ -510,6 +510,10 @@ class TradingScheduler:
                                     "ai_approved": eval_result.approved,
                                     "ai_confidence": getattr(eval_result, "confidence", None),
                                     "ai_reason": getattr(eval_result, "reasoning", None),
+                                    "shadow_decision": {
+                                        "approved": True,
+                                        "reason": "mechanical_baseline_always_approves_generated_signals",
+                                    },
                                     "options_chain_snapshot": [
                                         {
                                             "contract_id": c.contract_id,
