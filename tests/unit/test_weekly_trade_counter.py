@@ -5,26 +5,9 @@ reset correctly at year boundaries (week 1 of 2026 != week 1 of 2027).
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from risk.risk_manager import RiskManager
-from core.events import SignalEvent
-from portfolio.portfolio import Portfolio
-
-
-def _sell_put_signal(symbol: str = "AMD") -> SignalEvent:
-    from datetime import datetime, timezone
-    return SignalEvent(
-        strategy_id="wheel",
-        symbol=symbol,
-        signal_type="SELL_PUT",
-        strength=0.8,
-        timestamp=datetime.now(timezone.utc),
-        metadata={"collateral": 2800.0, "delta": -0.28},
-    )
 
 
 def test_global_week_counter_resets_on_new_iso_year():
@@ -39,7 +22,7 @@ def test_global_week_counter_resets_on_new_iso_year():
 
     # Now the system is in week 1 of 2026 — counter MUST reset
     with patch("risk.risk_manager.date") as mock_date:
-        mock_date.today.return_value = date(2026, 1, 5)  # Jan 5 2026 = ISO week 1 of 2026
+        mock_date.today.return_value = date(2026, 1, 1)  # Jan 1 2026 = ISO week 1 of 2026
         rm._reset_global_week_counter_if_needed()
 
     assert rm._total_new_trades_this_week == 0, (
@@ -65,7 +48,7 @@ def test_momentum_week_counter_resets_on_new_iso_year():
     rm._week_iso = (2025, 52)
 
     with patch("risk.risk_manager.date") as mock_date:
-        mock_date.today.return_value = date(2026, 1, 5)
+        mock_date.today.return_value = date(2026, 1, 1)  # Jan 1 2026 = ISO week 1 of 2026
         rm._reset_week_counter_if_needed()
 
     assert rm._momentum_trades_this_week == 0
