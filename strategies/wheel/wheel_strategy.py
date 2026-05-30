@@ -127,10 +127,23 @@ class WheelStrategy(Strategy):
             pos.total_premium_collected += fill.fill_price * 100
             pos.cycle_start = fill.filled_at
             logger.info(f"[Wheel] {sym}: CSP opened @ ${fill.fill_price} premium")
-            if pos.csp_position:
+            contract_id = fill.metadata.get("contract_id") if isinstance(fill.metadata, dict) else None
+            contract = next((c for c in pos.cached_chain if c.contract_id == contract_id), None)
+            if contract is not None:
+                pos.csp_position = CSPPosition(
+                    symbol=sym,
+                    contract=contract,
+                    premium_received=fill.fill_price,
+                    opened_at=fill.filled_at,
+                )
                 underlying_price = fill.metadata.get("underlying_price") if isinstance(fill.metadata, dict) else None
                 if underlying_price:
                     pos.csp_position.underlying_price_at_entry = Decimal(str(underlying_price))
+            else:
+                logger.warning(
+                    f"[Wheel] {sym}: csp_open fill — contract {contract_id!r} not in chain; "
+                    "position will fall back to SCANNING on next bar"
+                )
 
         elif leg == "csp_close" and fill.side == "buy":
             # CSP bought back — profit taken or stop hit
@@ -168,6 +181,21 @@ class WheelStrategy(Strategy):
             pos.state = WheelState.CC_OPEN
             pos.total_premium_collected += fill.fill_price * 100
             logger.info(f"[Wheel] {sym}: CC opened @ ${fill.fill_price} premium")
+            contract_id = fill.metadata.get("contract_id") if isinstance(fill.metadata, dict) else None
+            contract = next((c for c in pos.cached_chain if c.contract_id == contract_id), None)
+            if contract is not None:
+                pos.cc_position = CCPosition(
+                    symbol=sym,
+                    contract=contract,
+                    premium_received=fill.fill_price,
+                    opened_at=fill.filled_at,
+                    stock_cost_basis=pos.stock_cost_basis or Decimal("0"),
+                )
+            else:
+                logger.warning(
+                    f"[Wheel] {sym}: cc_open fill — contract {contract_id!r} not in chain; "
+                    "position will fall back to SCANNING on next bar"
+                )
 
         elif leg == "cc_close":
             called_away = fill.metadata.get("called_away", False)
