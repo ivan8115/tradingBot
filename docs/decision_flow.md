@@ -43,8 +43,7 @@ All decisions are logged to `logs/decisions/YYYY-MM-DD.jsonl` with the stage nam
 **Checks:** qty > 0, contract_id valid, Alpaca accepts the order
 **Position sizing:** Options signals always use qty=1 contract; equity signals use Kelly (0.25 fractional)
 **On fill:** `on_fill()` transitions wheel state machine AND creates `CSPPosition`/`CCPosition` objects from the cached chain — these objects are required for exit monitoring in Layers 5a/5b below
-
-> **Known gap:** Live Alpaca fills currently arrive without `metadata["leg"]`/`metadata["contract_id"]` populated. The fill handler dispatches on `leg`; until fills are enriched (correlating `order_id` back to the originating signal), the state machine will not advance on real fills. Assignment fills (`leg="assignment"`) are already enriched and work correctly.
+**Fill enrichment:** Live Alpaca fills arrive with empty metadata. `Executor` stores `{order_id → signal.metadata}` at submit time; `scheduler._on_fill` injects `leg`, `contract_id`, `underlying_price`, and correct `strategy_id` before routing. All Wheel fill paths (CSP open/close, CC open/close, assignment) are enriched. Options orders submit with `client_order_id=f"{strategy_id}-{uuid12}"` as a secondary mechanism. Equity fills (Swing/Momentum) are not yet enriched — low priority while both strategies are disabled.
 
 ## CSP Exit Monitoring (ongoing, not an entry gate)
 **File:** `strategies/wheel/wheel_strategy.py` → `_manage_csp()` → `csp_leg.should_close_early()`
