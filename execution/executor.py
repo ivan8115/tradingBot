@@ -33,6 +33,7 @@ class Executor:
         self._broker = broker
         self._builder = order_builder
         self._session_factory = get_session_factory(db_path)
+        self._pending_order_metadata: dict[str, dict] = {}
 
     async def execute_signal(
         self,
@@ -76,7 +77,13 @@ class Executor:
                     side=side,
                     order_type="limit" if limit_price else "market",
                     limit_price=limit_price,
+                    client_order_id=signal.strategy_id,
                 )
+                # Store metadata so _on_fill can enrich bare live fills
+                self._pending_order_metadata[alpaca_id] = {
+                    "strategy_id": signal.strategy_id,
+                    **signal.metadata,
+                }
             elif order.order_type == "market":
                 alpaca_id = self._broker.submit_market_order(
                     symbol=signal.symbol,
@@ -139,6 +146,14 @@ class Executor:
     ) -> None:
         """Public API for recording AI-rejected or pre-execution rejections."""
         self._save_signal(signal, approved=False, rejection_reason=rejection_reason)
+
+    def pop_pending_metadata(self, order_id: str) -> dict | None:
+        """
+        Retrieve and remove pending signal metadata for an order.
+        Returns None if the order is not in the registry (e.g. assignment fills,
+        equity fills, or orders cancelled before filling).
+        """
+        return self._pending_order_metadata.pop(order_id, None)
 
     def _save_signal(
         self,

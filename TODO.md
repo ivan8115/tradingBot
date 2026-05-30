@@ -11,22 +11,7 @@ cutoff means these can be wrong. The earnings filter is advisory only.
 **Fix:** Add a dedicated earnings API (Polygon.io calendar or Alpaca corporate actions
 endpoint). Until then, manually cross-check earnings before any weekly options trade.
 
-## 2. Live Alpaca fills missing `leg` / `contract_id` metadata — Wheel state machine stalls
-
-`WheelStrategy.on_fill` dispatches entirely on `fill.metadata.get("leg")`. Regular buy/sell
-fills from Alpaca's trade-update stream arrive with empty metadata — no `leg`, no `contract_id`.
-This means the state machine never advances from `CSP_OPEN` on a real fill (it only works in
-tests where metadata is hand-built). Assignment fills already carry `leg="assignment"` and work.
-
-**Impact:** After a CSP sell is filled live, the bot stays in `SCANNING` and may attempt to sell
-another CSP. No other part of the Wheel cycle will function until this is fixed.
-
-**Fix:** In the executor or scheduler, after submitting an options order, stash the signal
-metadata keyed by `order_id`. When the fill arrives via trade-update stream, look up the
-originating signal by `order.id` and inject `leg`, `contract_id`, and `underlying_price`
-into `FillEvent.metadata` before routing to `on_fill`.
-
-## 3. Gap-down check uses most-recent daily close, not true pre-market quote
+## 2. Gap-down check uses most-recent daily close, not true pre-market quote
 
 `_get_current_price()` fetches the most recent daily bar close. True pre-market gap detection
 requires extended-hours quotes from Alpaca (available via their quotes API).
@@ -37,7 +22,7 @@ until the stock prints a new daily bar. The >10% threshold still catches multi-d
 **Fix:** Switch to Alpaca's `get_latest_quote()` with `feed="iex"` or similar to get a real-time
 pre-market price.
 
-## 4. WheelPosition has no on-disk persistence
+## 3. WheelPosition has no on-disk persistence
 
 State machine state (`WheelState`, `csp_position`, etc.) lives in memory. A bot restart
 loses all state and the strategy treats all symbols as SCANNING.

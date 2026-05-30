@@ -119,7 +119,17 @@ class WheelStrategy(Strategy):
         sym = fill.symbol
         pos = self._positions.get(sym)
         if not pos:
-            return
+            # fill.symbol may be the contract symbol (e.g. "AMD240119P00280000") rather than
+            # the underlying. Fall back to scanning positions by contract_id in metadata.
+            contract_id_in_meta = fill.metadata.get("contract_id") if isinstance(fill.metadata, dict) else None
+            if contract_id_in_meta:
+                for underlying, candidate in self._positions.items():
+                    if any(c.contract_id == contract_id_in_meta for c in candidate.cached_chain):
+                        sym = underlying
+                        pos = candidate
+                        break
+            if not pos:
+                return
 
         leg = fill.metadata.get("leg")
 
@@ -341,6 +351,7 @@ class WheelStrategy(Strategy):
                 "iv_rank": iv_rank_val,
                 "ai_strike_reasoning": ai_strike_reasoning,
                 "collateral": float(contract.strike * 100),  # cash locked to secure this put
+                "underlying_price": float(bar.close),
                 "session_id": session_id,
             },
         )]

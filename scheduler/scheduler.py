@@ -585,6 +585,15 @@ class TradingScheduler:
                     )
 
     async def _on_fill(self, fill: FillEvent) -> None:
+        # Live Alpaca fills arrive with empty metadata (no leg/contract_id/strategy_id).
+        # Enrich from the executor's pending order registry, keyed by Alpaca order_id.
+        pending = self._executor.pop_pending_metadata(fill.order_id)
+        if pending:
+            strategy_id = pending.pop("strategy_id", None)
+            fill.metadata.update(pending)
+            if strategy_id and strategy_id != fill.strategy_id:
+                fill = fill.model_copy(update={"strategy_id": strategy_id})
+
         logger.info(
             f"Fill received: {fill.side.upper()} {fill.filled_qty}x "
             f"{fill.symbol} @ ${fill.fill_price}"

@@ -235,6 +235,7 @@ class BrokerClient:
         side: str,
         order_type: str = "limit",
         limit_price: Decimal | None = None,
+        client_order_id: str | None = None,
     ) -> str:
         """Submit an options order. Returns Alpaca order ID."""
         if order_type == "limit" and limit_price is None:
@@ -250,6 +251,7 @@ class BrokerClient:
                     side=order_side,
                     time_in_force=TimeInForce.DAY,
                     limit_price=float(limit_price),
+                    client_order_id=client_order_id,
                 )
             else:
                 request = MarketOrderRequest(
@@ -257,6 +259,7 @@ class BrokerClient:
                     qty=qty,
                     side=order_side,
                     time_in_force=TimeInForce.DAY,
+                    client_order_id=client_order_id,
                 )
 
             logger.info(
