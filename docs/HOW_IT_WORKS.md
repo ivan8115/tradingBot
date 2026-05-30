@@ -33,7 +33,7 @@ The cycle: **CSP → (maybe assigned) → CC → back to CSP**
 
 Five layers of filtering before any order is placed:
 
-1. **Watchlist scan** — Finviz finds stocks $10–$50 with active options markets
+1. **Watchlist scan** — Finviz finds stocks $10–$50 with active options markets; applies ETF blacklist (no leveraged ETFs, crypto ETFs, or VIX products) and a 500K daily-volume floor
 2. **Mechanical rules** — checks market trend, volatility rank, upcoming earnings (blocked within earnings window), and account risk limits
 3. **Claude Sonnet** — second opinion on the signal, approve/reject with confidence score
 4. **Claude Opus 4.7** — picks the specific contract (strike price + expiration) from the options chain
@@ -54,7 +54,7 @@ Nothing trades unless all five layers agree.
 | Max new trades/week | 3 |
 | Target holding period | 21–45 days |
 | Target delta | ~0.28 (moderately out of the money) |
-| IV Rank minimum | 40 (measured from real ATM options chain IV) |
+| IV Rank minimum | 40 (seeded from 252 daily ATR bars on first run; updated from live ATM chain IV every 15 min thereafter) |
 | Profit target | 50% of premium collected |
 | Soft stop (Tier 1) | 2.5× premium AND underlying below strike |
 | Mark stop (Tier 1.5) | 3× premium regardless of stock direction (IV spike protection) |
@@ -67,7 +67,7 @@ Nothing trades unless all five layers agree.
 ## The Risk
 
 The main risk is getting assigned on a stock that then **keeps falling and doesn't recover**. You're stuck holding 100 shares worth less than you paid. The bot manages this by:
-- Only targeting stocks it's willing to own (quality filter)
+- Only targeting stocks it's willing to own (quality filter: price $10–$50, 500K+ daily volume, blacklist blocks leveraged/crypto ETFs)
 - Hard-blocking new entries within 7 days of earnings (reducing strength within 30 days)
 - Three-tier exit system: profit target, mark stop (3× credit), pain threshold (15% below strike)
 - After assignment, covered calls exit if the stock falls more than 10% below cost basis
@@ -85,7 +85,7 @@ The main risk is getting assigned on a stock that then **keeps falling and doesn
 | 8:15 AM | Gap-down scan: open CSP positions checked for overnight drops >10% |
 | 8:30 AM | Watchlist refreshed from Finviz |
 | 9:30 AM | Market opens, live data stream starts |
-| Every 15 min | Options chains refreshed, new trades evaluated |
+| Every 15 min | Options chains refreshed, IV history updated, new trades evaluated |
 | 4:00 PM | Market closes, AI writes daily review (graded A–F) |
 | Friday 4:05 PM | Weekly performance review generated |
 

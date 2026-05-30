@@ -11,12 +11,20 @@ cutoff means these can be wrong. The earnings filter is advisory only.
 **Fix:** Add a dedicated earnings API (Polygon.io calendar or Alpaca corporate actions
 endpoint). Until then, manually cross-check earnings before any weekly options trade.
 
-## 2. Signal evaluation rate limit (20/day) may be too low
+## 2. Live Alpaca fills missing `leg` / `contract_id` metadata — Wheel state machine stalls
 
-With 6 positions × multiple symbols on the watchlist, the 20 Sonnet eval cap
-(`claude.max_signal_evals_per_day`) could be exhausted before EOD on active days.
+`WheelStrategy.on_fill` dispatches entirely on `fill.metadata.get("leg")`. Regular buy/sell
+fills from Alpaca's trade-update stream arrive with empty metadata — no `leg`, no `contract_id`.
+This means the state machine never advances from `CSP_OPEN` on a real fill (it only works in
+tests where metadata is hand-built). Assignment fills already carry `leg="assignment"` and work.
 
-**Fix:** Raise to 50 or make configurable in `config.yaml` under `claude.max_signal_evals_per_day`.
+**Impact:** After a CSP sell is filled live, the bot stays in `SCANNING` and may attempt to sell
+another CSP. No other part of the Wheel cycle will function until this is fixed.
+
+**Fix:** In the executor or scheduler, after submitting an options order, stash the signal
+metadata keyed by `order_id`. When the fill arrives via trade-update stream, look up the
+originating signal by `order.id` and inject `leg`, `contract_id`, and `underlying_price`
+into `FillEvent.metadata` before routing to `on_fill`.
 
 ## 3. Gap-down check uses most-recent daily close, not true pre-market quote
 

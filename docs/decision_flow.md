@@ -7,6 +7,7 @@ All decisions are logged to `logs/decisions/YYYY-MM-DD.jsonl` with the stage nam
 **File:** `strategies/wheel/wheel_strategy.py` → `_evaluate_entry()`
 **Log stage:** `wheel/mechanical_filter`, `wheel/entry_signal`
 **Checks:** IV rank ≥ 40, trend not "downtrend", options chain available
+**IV Rank source:** seeded from 252 daily ATR bars on first chain refresh per symbol (one attempt); updated from live ATM chain IV every 15 min thereafter
 **Rejection:** returns `[]` (no signal generated); logged with `decision: "reject"`
 
 ## Layer 2 — Sonnet Approval
@@ -27,8 +28,8 @@ All decisions are logged to `logs/decisions/YYYY-MM-DD.jsonl` with the stage nam
 **File:** `risk/risk_manager.py` → `validate_signal()`
 **Log stage:** `risk_manager`
 **Checks (in order):**
-1. Max drawdown (15% halt)
-2. Daily loss limit (3%)
+1. Max drawdown (15% halt) — computed from mark-to-market portfolio value including unrealized equity P&L
+2. Daily loss limit (3%) — same mark-to-market basis
 3. Total collateral cap (80% of account) — tracked as committed CSP collateral internally; not derived from portfolio cash (which stays flat for cash-secured puts until assignment)
 4. Position concentration (20% per symbol)
 5. Net delta exposure (±500)
@@ -40,7 +41,10 @@ All decisions are logged to `logs/decisions/YYYY-MM-DD.jsonl` with the stage nam
 ## Layer 5 — Execution
 **File:** `execution/executor.py`
 **Checks:** qty > 0, contract_id valid, Alpaca accepts the order
-**On fill:** `on_fill()` transitions wheel state machine
+**Position sizing:** Options signals always use qty=1 contract; equity signals use Kelly (0.25 fractional)
+**On fill:** `on_fill()` transitions wheel state machine AND creates `CSPPosition`/`CCPosition` objects from the cached chain — these objects are required for exit monitoring in Layers 5a/5b below
+
+> **Known gap:** Live Alpaca fills currently arrive without `metadata["leg"]`/`metadata["contract_id"]` populated. The fill handler dispatches on `leg`; until fills are enriched (correlating `order_id` back to the originating signal), the state machine will not advance on real fills. Assignment fills (`leg="assignment"`) are already enriched and work correctly.
 
 ## CSP Exit Monitoring (ongoing, not an entry gate)
 **File:** `strategies/wheel/wheel_strategy.py` → `_manage_csp()` → `csp_leg.should_close_early()`
