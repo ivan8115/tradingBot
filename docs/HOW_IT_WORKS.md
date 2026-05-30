@@ -82,7 +82,7 @@ The main risk is getting assigned on a stock that then **keeps falling and doesn
 | Time | What Happens |
 |---|---|
 | 8:00 AM | Portfolio sync, market regime check, AI pre-market briefing |
-| 8:15 AM | Gap-down scan: open CSP positions checked for overnight drops >10% |
+| 8:15 AM | Gap-down scan: open CSP positions checked using live IEX quote (pre-market aware); alerts if >10% below CSP entry price |
 | 8:30 AM | Watchlist refreshed from Finviz |
 | 9:30 AM | Market opens, live data stream starts |
 | Every 15 min | Options chains refreshed, IV history updated, new trades evaluated |
