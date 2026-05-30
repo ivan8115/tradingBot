@@ -22,17 +22,7 @@ until the stock prints a new daily bar. The >10% threshold still catches multi-d
 **Fix:** Switch to Alpaca's `get_latest_quote()` with `feed="iex"` or similar to get a real-time
 pre-market price.
 
-## 3. WheelPosition has no on-disk persistence
-
-State machine state (`WheelState`, `csp_position`, etc.) lives in memory. A bot restart
-loses all state and the strategy treats all symbols as SCANNING.
-
-**Impact:** After a crash or restart, the bot may attempt to re-enter CSP positions that are
-already open, potentially doubling up collateral.
-
-**Fix:** Add DB-backed state load/save. Write state to SQLite on every fill. Load on startup.
-
-## 4. Equity fills not enriched — Swing/Momentum on_fill never fires on live fills
+## 3. Equity fills not enriched — Swing/Momentum on_fill never fires on live fills
 
 `submit_limit_order` and `submit_market_order` in `execution/executor.py` do not set
 `client_order_id` and do not populate `_pending_order_metadata`. Live equity fills

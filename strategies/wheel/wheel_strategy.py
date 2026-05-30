@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Optional
@@ -565,25 +565,130 @@ class WheelStrategy(Strategy):
         }
 
     def get_state(self) -> dict:
-        return {
-            sym: {
+        result = {}
+        for sym, pos in self._positions.items():
+            entry: dict = {
                 "state": pos.state.value,
                 "stock_quantity": pos.stock_quantity,
                 "stock_cost_basis": str(pos.stock_cost_basis) if pos.stock_cost_basis else None,
                 "total_premium": str(pos.total_premium_collected),
+                "csp_position": None,
+                "cc_position": None,
             }
-            for sym, pos in self._positions.items()
-        }
+            if pos.csp_position:
+                c = pos.csp_position.contract
+                entry["csp_position"] = {
+                    "contract_id": c.contract_id,
+                    "symbol": c.symbol,
+                    "option_type": c.option_type,
+                    "strike": str(c.strike),
+                    "expiry": c.expiry.isoformat(),
+                    "bid": str(c.bid),
+                    "ask": str(c.ask),
+                    "delta": c.delta,
+                    "iv": c.iv,
+                    "open_interest": c.open_interest,
+                    "volume": c.volume,
+                    "premium_received": str(pos.csp_position.premium_received),
+                    "opened_at": pos.csp_position.opened_at.isoformat(),
+                    "contracts": pos.csp_position.contracts,
+                    "underlying_price_at_entry": str(pos.csp_position.underlying_price_at_entry)
+                        if pos.csp_position.underlying_price_at_entry else None,
+                }
+            if pos.cc_position:
+                c = pos.cc_position.contract
+                entry["cc_position"] = {
+                    "contract_id": c.contract_id,
+                    "symbol": c.symbol,
+                    "option_type": c.option_type,
+                    "strike": str(c.strike),
+                    "expiry": c.expiry.isoformat(),
+                    "bid": str(c.bid),
+                    "ask": str(c.ask),
+                    "delta": c.delta,
+                    "iv": c.iv,
+                    "open_interest": c.open_interest,
+                    "volume": c.volume,
+                    "premium_received": str(pos.cc_position.premium_received),
+                    "opened_at": pos.cc_position.opened_at.isoformat(),
+                    "contracts": pos.cc_position.contracts,
+                    "stock_cost_basis": str(pos.cc_position.stock_cost_basis),
+                }
+            result[sym] = entry
+        return result
 
     def load_state(self, state: dict) -> None:
         for sym, data in state.items():
-            if sym in self._positions:
-                self._positions[sym].state = WheelState(data["state"])
-                self._positions[sym].stock_quantity = data.get("stock_quantity", 0)
-                cb = data.get("stock_cost_basis")
-                self._positions[sym].stock_cost_basis = Decimal(cb) if cb else None
-                tp = data.get("total_premium", "0")
-                self._positions[sym].total_premium_collected = Decimal(tp)
+            if sym not in self._positions:
+                continue
+            pos = self._positions[sym]
+            pos.state = WheelState(data["state"])
+            pos.stock_quantity = data.get("stock_quantity", 0)
+            cb = data.get("stock_cost_basis")
+            pos.stock_cost_basis = Decimal(cb) if cb else None
+            tp = data.get("total_premium", "0")
+            pos.total_premium_collected = Decimal(tp)
+
+            # Restore CSPPosition (only when state is CSP_OPEN)
+            csp_data = data.get("csp_position")
+            if csp_data and pos.state == WheelState.CSP_OPEN:
+                try:
+                    expiry = date.fromisoformat(csp_data["expiry"])
+                    contract = OptionContract(
+                        symbol=csp_data["symbol"],
+                        contract_id=csp_data["contract_id"],
+                        option_type=csp_data["option_type"],
+                        strike=Decimal(csp_data["strike"]),
+                        expiry=expiry,
+                        dte=max(0, (expiry - date.today()).days),
+                        bid=Decimal(csp_data["bid"]),
+                        ask=Decimal(csp_data["ask"]),
+                        delta=csp_data["delta"],
+                        iv=csp_data["iv"],
+                        open_interest=csp_data.get("open_interest", 0),
+                        volume=csp_data.get("volume", 0),
+                    )
+                    uep = csp_data.get("underlying_price_at_entry")
+                    pos.csp_position = CSPPosition(
+                        symbol=pos.symbol,
+                        contract=contract,
+                        premium_received=Decimal(csp_data["premium_received"]),
+                        opened_at=datetime.fromisoformat(csp_data["opened_at"]),
+                        contracts=csp_data.get("contracts", 1),
+                        underlying_price_at_entry=Decimal(str(uep)) if uep else None,
+                    )
+                except Exception as e:
+                    logger.warning(f"[Wheel] {sym}: failed to restore CSPPosition from state: {e}")
+
+            # Restore CCPosition (only when state is CC_OPEN)
+            cc_data = data.get("cc_position")
+            if cc_data and pos.state == WheelState.CC_OPEN:
+                try:
+                    expiry = date.fromisoformat(cc_data["expiry"])
+                    contract = OptionContract(
+                        symbol=cc_data["symbol"],
+                        contract_id=cc_data["contract_id"],
+                        option_type=cc_data["option_type"],
+                        strike=Decimal(cc_data["strike"]),
+                        expiry=expiry,
+                        dte=max(0, (expiry - date.today()).days),
+                        bid=Decimal(cc_data["bid"]),
+                        ask=Decimal(cc_data["ask"]),
+                        delta=cc_data["delta"],
+                        iv=cc_data["iv"],
+                        open_interest=cc_data.get("open_interest", 0),
+                        volume=cc_data.get("volume", 0),
+                    )
+                    pos.cc_position = CCPosition(
+                        symbol=pos.symbol,
+                        contract=contract,
+                        premium_received=Decimal(cc_data["premium_received"]),
+                        opened_at=datetime.fromisoformat(cc_data["opened_at"]),
+                        stock_cost_basis=Decimal(cc_data["stock_cost_basis"]),
+                        contracts=cc_data.get("contracts", 1),
+                    )
+                except Exception as e:
+                    logger.warning(f"[Wheel] {sym}: failed to restore CCPosition from state: {e}")
 
     def _estimate_iv(self, snap, bar: BarEvent) -> float:
         """
