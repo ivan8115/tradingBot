@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 
+from alpaca.data.enums import DataFeed
+from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.historical.option import OptionHistoricalDataClient
-from alpaca.data.requests import OptionSnapshotRequest
+from alpaca.data.requests import OptionSnapshotRequest, StockLatestQuoteRequest
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import ContractType, OrderSide, OrderType, TimeInForce
 from alpaca.trading.requests import (
@@ -64,6 +66,10 @@ class BrokerClient:
             paper=settings.alpaca_paper,
         )
         self._option_data = OptionHistoricalDataClient(
+            api_key=settings.alpaca_api_key,
+            secret_key=settings.alpaca_secret_key,
+        )
+        self._stock_data = StockHistoricalDataClient(
             api_key=settings.alpaca_api_key,
             secret_key=settings.alpaca_secret_key,
         )
@@ -133,6 +139,37 @@ class BrokerClient:
             unrealized_pnl_pct=Decimal(str(p.unrealized_plpc)),
             side=p.side.value,
         )
+
+    # ------------------------------------------------------------------
+    # Market Data (Quotes)
+    # ------------------------------------------------------------------
+
+    def get_latest_quote(self, symbol: str) -> float | None:
+        """
+        Fetch the latest available quote price for a symbol.
+        Uses IEX feed — provides real-time data including pre/post-market activity.
+        Returns ask_price (bid if ask is zero/unavailable), or None on failure.
+        Used by the gap-down scanner to detect overnight moves before the first bar.
+        """
+        try:
+            req = StockLatestQuoteRequest(
+                symbol_or_symbols=[symbol],
+                feed=DataFeed.IEX,
+            )
+            data = self._stock_data.get_stock_latest_quote(req)
+            quote = data.get(symbol)
+            if quote is None:
+                return None
+            ask = float(quote.ask_price or 0)
+            bid = float(quote.bid_price or 0)
+            if ask > 0:
+                return ask
+            if bid > 0:
+                return bid
+            return None
+        except Exception as e:
+            logger.warning(f"[BrokerClient] get_latest_quote failed for {symbol}: {e}")
+            return None
 
     # ------------------------------------------------------------------
     # Options

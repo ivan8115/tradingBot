@@ -796,9 +796,18 @@ class TradingScheduler:
                     logger.warning(f"[GapDown] Check failed for {symbol}: {exc}")
 
     async def _get_current_price(self, symbol: str) -> float | None:
-        """Fetch the most recent closing price for a symbol via HistoricalDataFetcher."""
-        # Uses daily close — won't catch intraday pre-market moves.
-        # True pre-market detection requires Alpaca extended-hours quotes (see TODO.md).
+        """
+        Fetch the latest available quote price for a symbol (pre-market aware).
+        Tries Alpaca's real-time IEX quote first; falls back to most-recent daily bar close.
+        """
+        try:
+            price = self._broker.get_latest_quote(symbol)
+            if price is not None:
+                return price
+        except Exception as exc:
+            logger.warning(f"[GapDown] Live quote failed for {symbol}: {exc}")
+
+        # Fallback: last daily bar close
         try:
             loop = asyncio.get_running_loop()
             df = await loop.run_in_executor(

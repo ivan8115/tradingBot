@@ -11,18 +11,7 @@ cutoff means these can be wrong. The earnings filter is advisory only.
 **Fix:** Add a dedicated earnings API (Polygon.io calendar or Alpaca corporate actions
 endpoint). Until then, manually cross-check earnings before any weekly options trade.
 
-## 2. Gap-down check uses most-recent daily close, not true pre-market quote
-
-`_get_current_price()` fetches the most recent daily bar close. True pre-market gap detection
-requires extended-hours quotes from Alpaca (available via their quotes API).
-
-**Impact:** A gap-down that occurs after yesterday's close but before 8:15 AM won't be detected
-until the stock prints a new daily bar. The >10% threshold still catches multi-day moves.
-
-**Fix:** Switch to Alpaca's `get_latest_quote()` with `feed="iex"` or similar to get a real-time
-pre-market price.
-
-## 3. Equity fills not enriched — Swing/Momentum on_fill never fires on live fills
+## 2. Equity fills not enriched — Swing/Momentum on_fill never fires on live fills
 
 `submit_limit_order` and `submit_market_order` in `execution/executor.py` do not set
 `client_order_id` and do not populate `_pending_order_metadata`. Live equity fills
