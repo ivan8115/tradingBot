@@ -439,8 +439,7 @@ class TradingScheduler:
 
     async def _on_bar(self, bar: BarEvent) -> None:
         from decimal import Decimal
-        self._portfolio._current_prices = getattr(self._portfolio, '_current_prices', {})
-        self._portfolio._current_prices[bar.symbol] = bar.close  # type: ignore[attr-defined]
+        self._portfolio.update_price(bar.symbol, bar.close)
 
         # AI strike pre-selection for Wheel strategies in SCANNING state
         if self._advisor._enabled:

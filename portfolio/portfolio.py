@@ -52,6 +52,7 @@ class Portfolio:
         self._realized_pnl: Decimal = Decimal("0")
         self._peak_value: Decimal = cash
         self._created_at: datetime = datetime.utcnow()
+        self._current_prices: dict[str, Decimal] = {}
 
     # ------------------------------------------------------------------
     # State
@@ -73,6 +74,10 @@ class Portfolio:
     def trade_history(self) -> list[FillEvent]:
         return self._trade_history
 
+    def update_price(self, symbol: str, price: Decimal) -> None:
+        """Cache the current market price for a symbol. Called on every bar."""
+        self._current_prices[symbol] = price
+
     def equity(self, current_prices: dict[str, Decimal] | None = None) -> Decimal:
         """Total value of all positions at current market prices."""
         total = Decimal("0")
@@ -84,11 +89,13 @@ class Portfolio:
         return total
 
     def total_value(self, current_prices: dict[str, Decimal] | None = None) -> Decimal:
-        return self._cash + self.equity(current_prices)
+        prices = current_prices if current_prices is not None else self._current_prices
+        return self._cash + self.equity(prices)
 
     def drawdown(self, current_prices: dict[str, Decimal] | None = None) -> Decimal:
         """Current drawdown from peak as a fraction (0.0 to 1.0)."""
-        total = self.total_value(current_prices)
+        prices = current_prices if current_prices is not None else self._current_prices
+        total = self.total_value(prices)
         if total > self._peak_value:
             self._peak_value = total
         if self._peak_value == Decimal("0"):
