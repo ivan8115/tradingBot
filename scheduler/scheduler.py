@@ -801,7 +801,11 @@ class TradingScheduler:
         Tries Alpaca's real-time IEX quote first; falls back to most-recent daily bar close.
         """
         try:
-            price = self._broker.get_latest_quote(symbol)
+            loop = asyncio.get_running_loop()
+            price = await loop.run_in_executor(
+                None,
+                lambda: self._broker.get_latest_quote(symbol),
+            )
             if price is not None:
                 return price
         except Exception as exc:
