@@ -21,6 +21,20 @@ from core.config import settings
 from database.models import WatchlistCandidate
 
 
+# Symbols that must never appear in the Wheel watchlist.
+# Leveraged ETFs can gap 20–40% overnight — catastrophic for CSP writing.
+_WATCHLIST_BLACKLIST: frozenset[str] = frozenset({
+    # Leveraged equity ETFs
+    "TSLL", "TSLQ", "NVDL", "NVDX", "SOXL", "SOXS",
+    "TQQQ", "SQQQ", "UPRO", "SPXU", "SPXL", "LABU", "LABD",
+    "FAS", "FAZ",
+    # Crypto ETFs / crypto-adjacent
+    "BITO", "BITI", "MSTR", "GBTC",
+    # VIX products
+    "UVXY", "SVXY", "VXX",
+})
+
+
 @dataclass
 class WatchlistEntry:
     symbol: str
@@ -108,7 +122,9 @@ class WatchlistProvider:
                         continue
                     if price < self._cfg.min_price or price > self._cfg.max_price:
                         continue
-                    if vol_int < self._cfg.min_options_volume:
+                    if symbol in _WATCHLIST_BLACKLIST:
+                        continue
+                    if vol_int < self._cfg.min_stock_volume:
                         continue
 
                     entries.append(

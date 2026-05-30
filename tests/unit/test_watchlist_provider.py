@@ -131,3 +131,73 @@ def test_enrich_quiverquant_failure_is_nonfatal(mock_get, monkeypatch):
     entries = [WatchlistEntry(symbol="AMD", price=40.0, iv_proxy=40.0, options_volume=1000)]
     result = provider._enrich_quiverquant(entries)
     assert result[0].quiverquant_score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Blacklist
+# ---------------------------------------------------------------------------
+
+@patch("data.watchlist_provider.Screener")
+def test_blacklisted_symbols_excluded(mock_screener_cls, monkeypatch):
+    """Symbols on the ETF blacklist must never appear in scan results."""
+    monkeypatch.setenv("ALPACA_API_KEY", "test")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "test")
+
+    mock_screener = MagicMock()
+    mock_screener.__iter__ = MagicMock(return_value=iter([
+        {"Ticker": "AMD", "Price": "35.00", "Volatility": "40%", "Volume": "2000000"},
+        {"Ticker": "TSLL", "Price": "15.00", "Volatility": "120%", "Volume": "5000000"},
+        {"Ticker": "BITO", "Price": "25.00", "Volatility": "80%", "Volume": "3000000"},
+        {"Ticker": "SOXL", "Price": "30.00", "Volatility": "90%", "Volume": "4000000"},
+    ]))
+    mock_screener_cls.return_value = mock_screener
+
+    from core.config import settings
+    monkeypatch.setattr(settings.watchlist, "min_price", 10.0)
+    monkeypatch.setattr(settings.watchlist, "max_price", 50.0)
+    monkeypatch.setattr(settings.watchlist, "min_options_volume", 0)
+    monkeypatch.setattr(settings.watchlist, "min_stock_volume", 0)
+
+    provider = WatchlistProvider.__new__(WatchlistProvider)
+    provider._cfg = settings.watchlist
+    provider._api_key = ""
+
+    entries = provider._scan_finviz()
+    symbols = [e.symbol for e in entries]
+    assert "AMD" in symbols
+    assert "TSLL" not in symbols, "TSLL is a leveraged ETF — must be blacklisted"
+    assert "BITO" not in symbols, "BITO is a crypto ETF — must be blacklisted"
+    assert "SOXL" not in symbols, "SOXL is a leveraged ETF — must be blacklisted"
+
+
+# ---------------------------------------------------------------------------
+# Stock volume filter
+# ---------------------------------------------------------------------------
+
+@patch("data.watchlist_provider.Screener")
+def test_low_volume_stock_excluded(mock_screener_cls, monkeypatch):
+    """Stocks below min_stock_volume must be excluded."""
+    monkeypatch.setenv("ALPACA_API_KEY", "test")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "test")
+
+    mock_screener = MagicMock()
+    mock_screener.__iter__ = MagicMock(return_value=iter([
+        {"Ticker": "LIQUID", "Price": "20.00", "Volatility": "30%", "Volume": "1000000"},
+        {"Ticker": "ILLIQUID", "Price": "20.00", "Volatility": "35%", "Volume": "100000"},
+    ]))
+    mock_screener_cls.return_value = mock_screener
+
+    from core.config import settings
+    monkeypatch.setattr(settings.watchlist, "min_price", 10.0)
+    monkeypatch.setattr(settings.watchlist, "max_price", 50.0)
+    monkeypatch.setattr(settings.watchlist, "min_options_volume", 0)
+    monkeypatch.setattr(settings.watchlist, "min_stock_volume", 500_000)
+
+    provider = WatchlistProvider.__new__(WatchlistProvider)
+    provider._cfg = settings.watchlist
+    provider._api_key = ""
+
+    entries = provider._scan_finviz()
+    symbols = [e.symbol for e in entries]
+    assert "LIQUID" in symbols
+    assert "ILLIQUID" not in symbols, "ILLIQUID has volume 100K < 500K minimum"

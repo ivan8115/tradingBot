@@ -142,7 +142,8 @@ class WatchlistConfig(BaseModel):
     max_symbols: int = 15           # max Wheel candidates per day
     min_price: float = 10.0        # stock price floor
     max_price: float = 50.0        # stock price ceiling (100 shares = $5K max collateral for small accounts)
-    min_options_volume: int = 200  # minimum daily options volume
+    min_options_volume: int = 200  # kept for future real options volume check
+    min_stock_volume: int = 500_000  # proxy for liquidity: require 500K+ daily shares traded
     quiverquant_boost: bool = True  # weight candidates with recent congressional buys
     refresh_hour: int = 8          # pre-market scan time (ET)
     refresh_minute: int = 30
