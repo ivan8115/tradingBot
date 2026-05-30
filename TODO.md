@@ -31,3 +31,20 @@ loses all state and the strategy treats all symbols as SCANNING.
 already open, potentially doubling up collateral.
 
 **Fix:** Add DB-backed state load/save. Write state to SQLite on every fill. Load on startup.
+
+## 4. Equity fills not enriched — Swing/Momentum on_fill never fires on live fills
+
+`submit_limit_order` and `submit_market_order` in `execution/executor.py` do not set
+`client_order_id` and do not populate `_pending_order_metadata`. Live equity fills
+arrive with `strategy_id` derived from Alpaca's auto-generated order UUID, which never
+matches the strategy's `strategy_id`. Every `on_fill` in `SwingStrategy` and
+`MomentumStrategy` filters on `fill.strategy_id != self.strategy_id` and returns early.
+
+**Impact:** Position state (open/closed flags, hold bars, stop levels) never updates
+from live fills — exits driven by `on_fill` won't fire.
+
+**Fix:** Apply the same pending registry pattern to the equity submit paths in
+`executor.execute_signal`, passing `client_order_id=f"{signal.strategy_id}-{uuid.uuid4().hex[:12]}"`.
+
+**Priority:** Low — Swing and Momentum are currently disabled (PDT risk on $10K account).
+Fix before re-enabling either strategy.

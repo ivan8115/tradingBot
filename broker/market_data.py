@@ -182,7 +182,7 @@ class MarketDataStream:
                     is_options=True,
                     option_contract_id=order.symbol,
                     filled_at=update.timestamp,
-                    metadata={"leg": "assignment"},
+                    metadata={"leg": "assignment", "contract_id": order.symbol},
                 )
                 if self._fill_handler:
                     await self._fill_handler(fill)
