@@ -63,14 +63,14 @@ class RiskManager:
         self._max_open_positions = guardrails.max_open_positions
         self._max_total_weekly_trades = guardrails.max_new_trades_per_week
         self._total_new_trades_this_week: int = 0
-        self._global_week_iso: int = -1
+        self._global_week_iso: tuple[int, int] = (-1, -1)
 
         self._daily_start_value: Decimal | None = None
         self._net_portfolio_delta: float = 0.0
         self._committed_csp_collateral: float = 0.0
         self._regime: Regime = Regime.NEUTRAL
         self._momentum_trades_this_week: int = 0
-        self._week_iso: int = -1
+        self._week_iso: tuple[int, int] = (-1, -1)
 
     def validate_signal(
         self,
@@ -309,7 +309,7 @@ class RiskManager:
         return RiskCheck(name="risk_reward", passed=True)
 
     def _reset_week_counter_if_needed(self) -> None:
-        current_week = date.today().isocalendar()[1]
+        current_week = date.today().isocalendar()[:2]
         if current_week != self._week_iso:
             self._momentum_trades_this_week = 0
             self._week_iso = current_week
@@ -328,7 +328,7 @@ class RiskManager:
         return RiskCheck(name="weekly_momentum_cap", passed=True)
 
     def _reset_global_week_counter_if_needed(self) -> None:
-        current_week = date.today().isocalendar()[1]
+        current_week = date.today().isocalendar()[:2]
         if current_week != self._global_week_iso:
             self._total_new_trades_this_week = 0
             self._global_week_iso = current_week

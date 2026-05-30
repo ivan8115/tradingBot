@@ -300,7 +300,7 @@ class TradingScheduler:
             return
         logger.info("=== WATCHLIST REFRESH ===")
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             symbols = await loop.run_in_executor(None, self._watchlist.refresh)
             if not symbols:
                 logger.warning("[Watchlist] Refresh returned empty list — no symbol change")
@@ -791,7 +791,7 @@ class TradingScheduler:
         # Uses daily close — won't catch intraday pre-market moves.
         # True pre-market detection requires Alpaca extended-hours quotes (see TODO.md).
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             df = await loop.run_in_executor(
                 None,
                 lambda: self._fetcher.fetch_recent_bars(symbol, days=2, timeframe="1Day"),

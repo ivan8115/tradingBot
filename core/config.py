@@ -178,7 +178,7 @@ class ClaudeConfig(BaseModel):
     max_tokens_review: int = 4096
     signal_eval_timeout_seconds: int = 10
     briefing_timeout_seconds: int = 30
-    max_signal_evals_per_day: int = 20
+    max_signal_evals_per_day: int = 50   # was 20 — 15 symbols hit 20 evals in < 20 min
 
 
 class SystemConfig(BaseModel):
