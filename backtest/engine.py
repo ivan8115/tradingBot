@@ -79,6 +79,7 @@ class BacktestEngine:
     async def _on_bar(self, bar: BarEvent) -> None:
         """Process one bar: update prices, check fills, run strategy, risk-check signals."""
         self._current_prices[bar.symbol] = bar.close
+        self._portfolio.update_price(bar.symbol, bar.close)
 
         # 1. Fill any pending orders using this bar's OHLCV
         fills = self._broker.process_bar(bar)

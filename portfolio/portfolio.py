@@ -80,9 +80,10 @@ class Portfolio:
 
     def equity(self, current_prices: dict[str, Decimal] | None = None) -> Decimal:
         """Total value of all positions at current market prices."""
+        prices = current_prices if current_prices is not None else self._current_prices
         total = Decimal("0")
         for sym, pos in self._positions.items():
-            price = (current_prices or {}).get(sym, Decimal("0"))
+            price = prices.get(sym, Decimal("0"))
             if price:
                 multiplier = Decimal("100") if pos.is_options else Decimal("1")
                 total += price * abs(pos.quantity) * multiplier
