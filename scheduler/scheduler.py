@@ -630,9 +630,10 @@ class TradingScheduler:
                     current_price = float(current_prices.get(symbol, 0)) or None
                     wheel.update_options_chain(symbol, chain, underlying_price=current_price)
 
-                    # Seed IV history from historical bars if this symbol is new
+                    # Seed IV history from historical bars if this symbol is new (attempt once)
                     pos = wheel._positions.get(symbol)
-                    if pos is not None and len(pos.iv_history) < 30:
+                    if pos is not None and len(pos.iv_history) < 30 and symbol not in wheel._iv_seed_attempted:
+                        wheel._iv_seed_attempted.add(symbol)
                         try:
                             loop = asyncio.get_running_loop()
                             df = await loop.run_in_executor(

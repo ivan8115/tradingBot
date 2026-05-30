@@ -89,6 +89,8 @@ class WheelStrategy(Strategy):
         self._positions: dict[str, WheelPosition] = {
             sym: WheelPosition(symbol=sym) for sym in symbols
         }
+        # Tracks symbols for which IV history seeding has been attempted (once per run)
+        self._iv_seed_attempted: set[str] = set()
 
     def on_bar(self, bar: BarEvent) -> list[SignalEvent]:
         if bar.symbol not in self.symbols:
