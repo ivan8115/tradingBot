@@ -19,7 +19,7 @@ def _make_assignment_update(symbol="AMD240119P00120000", qty=100, strike=120.0):
     order = MagicMock()
     order.id = "assign-order-001"
     order.symbol = symbol
-    order.client_order_id = "wheel"
+    order.client_order_id = "wheel-abc123testfix"
     order.side = MagicMock()
     order.side.value = "sell"
 

@@ -24,6 +24,12 @@ BarHandler = Callable[[BarEvent], Coroutine]
 FillHandler = Callable[[FillEvent], Coroutine]
 
 
+def _strategy_id_from_order(order, default: str = "unknown") -> str:
+    """Extract strategy prefix from client_order_id (format: '{strategy}-{uuid12}')."""
+    raw = getattr(order, "client_order_id", None) or ""
+    return raw.split("-")[0] if raw else default
+
+
 class MarketDataStream:
     """
     Wraps Alpaca's WebSocket data stream.
@@ -168,7 +174,7 @@ class MarketDataStream:
                 fill = FillEvent(
                     order_id=str(order.id),
                     symbol=order.symbol,
-                    strategy_id=order.client_order_id or "wheel",
+                    strategy_id=_strategy_id_from_order(order, default="wheel"),
                     side="sell",
                     filled_qty=qty,
                     fill_price=Decimal(str(price)),
@@ -197,7 +203,7 @@ class MarketDataStream:
             fill = FillEvent(
                 order_id=str(order.id),
                 symbol=order.symbol,
-                strategy_id=order.client_order_id or "unknown",
+                strategy_id=_strategy_id_from_order(order, default="unknown"),
                 side="buy" if order.side.value == "buy" else "sell",
                 filled_qty=fill_qty,
                 fill_price=Decimal(str(fill_price_raw)),
