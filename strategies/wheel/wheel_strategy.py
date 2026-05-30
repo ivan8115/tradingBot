@@ -474,6 +474,42 @@ class WheelStrategy(Strategy):
                 if len(pos.iv_history) > 252:
                     pos.iv_history = pos.iv_history[-252:]
 
+    def seed_iv_history(self, symbol: str, bars_df) -> None:
+        """
+        Seed iv_history from historical daily bars using ATR-based IV proxy.
+        iv_estimate = (ATR_14 / close) × sqrt(252).
+        Skips if iv_history already has >=30 entries (considered seeded).
+        Called by the scheduler when a symbol's chain is first refreshed.
+        """
+        import math
+        if symbol not in self._positions:
+            return
+        pos = self._positions[symbol]
+        if len(pos.iv_history) >= 30:
+            return
+        if bars_df is None or bars_df.empty or len(bars_df) < 15:
+            return
+        try:
+            import pandas_ta as ta
+            closes = bars_df["close"].astype(float)
+            highs = bars_df["high"].astype(float)
+            lows = bars_df["low"].astype(float)
+            atr = ta.atr(highs, lows, closes, length=14)
+            if atr is None or atr.empty:
+                return
+            daily_iv = [
+                float(a) / float(c) * math.sqrt(252)
+                for a, c in zip(atr, closes)
+                if a == a and c > 0  # skip NaN (NaN != NaN is True)
+            ]
+            pos.iv_history = [iv for iv in daily_iv if iv > 0][-252:]
+            logger.info(
+                f"[Wheel] {symbol}: iv_history seeded — "
+                f"{len(pos.iv_history)} daily observations"
+            )
+        except Exception as e:
+            logger.warning(f"[Wheel] {symbol}: iv_history seed failed: {e}")
+
     def sync_symbols(self, new_symbols: list[str]) -> None:
         """
         Update the active symbol list from a fresh watchlist scan.

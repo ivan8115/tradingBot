@@ -629,6 +629,21 @@ class TradingScheduler:
                     current_prices = getattr(self._portfolio, "_current_prices", {})
                     current_price = float(current_prices.get(symbol, 0)) or None
                     wheel.update_options_chain(symbol, chain, underlying_price=current_price)
+
+                    # Seed IV history from historical bars if this symbol is new
+                    pos = wheel._positions.get(symbol)
+                    if pos is not None and len(pos.iv_history) < 30:
+                        try:
+                            loop = asyncio.get_running_loop()
+                            df = await loop.run_in_executor(
+                                None,
+                                lambda s=symbol: self._fetcher.fetch_recent_bars(s, days=365, timeframe="1Day"),
+                            )
+                            if df is not None and not df.empty:
+                                wheel.seed_iv_history(symbol, df)
+                        except Exception as seed_exc:
+                            logger.warning(f"[Scheduler] IV seed failed for {symbol}: {seed_exc}")
+
                     logger.debug(f"[Scheduler] Chain refreshed: {symbol} ({len(chain)} contracts)")
                 except Exception as e:
                     logger.warning(f"[Scheduler] Chain refresh failed for {symbol}: {e}")
