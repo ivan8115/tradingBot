@@ -5,6 +5,8 @@ and persists everything to the database.
 
 from __future__ import annotations
 
+import uuid
+from collections import OrderedDict
 from decimal import Decimal
 
 from loguru import logger
@@ -33,7 +35,8 @@ class Executor:
         self._broker = broker
         self._builder = order_builder
         self._session_factory = get_session_factory(db_path)
-        self._pending_order_metadata: dict[str, dict] = {}
+        self._pending_order_metadata: OrderedDict[str, dict] = OrderedDict()
+        self._pending_order_max: int = 200
 
     async def execute_signal(
         self,
@@ -77,13 +80,16 @@ class Executor:
                     side=side,
                     order_type="limit" if limit_price else "market",
                     limit_price=limit_price,
-                    client_order_id=signal.strategy_id,
+                    client_order_id=f"{signal.strategy_id}-{uuid.uuid4().hex[:12]}",
                 )
                 # Store metadata so _on_fill can enrich bare live fills
                 self._pending_order_metadata[alpaca_id] = {
                     "strategy_id": signal.strategy_id,
                     **signal.metadata,
                 }
+                # Evict oldest entry if over cap
+                if len(self._pending_order_metadata) > self._pending_order_max:
+                    self._pending_order_metadata.popitem(last=False)
             elif order.order_type == "market":
                 alpaca_id = self._broker.submit_market_order(
                     symbol=signal.symbol,
