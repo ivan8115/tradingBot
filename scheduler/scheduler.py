@@ -31,7 +31,7 @@ from data.historical import HistoricalDataFetcher
 from data.market_regime import MarketRegimeFilter
 from data.watchlist_provider import WatchlistProvider
 from execution.executor import Executor
-from execution.order_builder import OrderBuilder
+from execution.order_builder import OPTIONS_SIGNALS, OrderBuilder
 from monitoring.alerting import AlertLevel, alerter
 from portfolio.portfolio import Portfolio
 from risk.position_sizer import PositionSizer
@@ -570,12 +570,15 @@ class TradingScheduler:
 
                 result = self._risk.validate_signal(signal, self._portfolio, bar.close)
                 if result.approved:
-                    qty = self._sizer.size_position(
-                        signal=signal,
-                        portfolio=self._portfolio,
-                        current_price=bar.close,
-                        atr=signal.metadata.get("atr"),
-                    )
+                    if signal.signal_type in OPTIONS_SIGNALS:
+                        qty = 1
+                    else:
+                        qty = self._sizer.size_position(
+                            signal=signal,
+                            portfolio=self._portfolio,
+                            current_price=bar.close,
+                            atr=signal.metadata.get("atr"),
+                        )
                     await self._executor.execute_signal(
                         signal=signal,
                         quantity=qty,
