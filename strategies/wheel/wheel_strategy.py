@@ -622,7 +622,11 @@ class WheelStrategy(Strategy):
             if sym not in self._positions:
                 continue
             pos = self._positions[sym]
-            pos.state = WheelState(data["state"])
+            raw_state = data.get("state")
+            if raw_state is None:
+                logger.warning(f"[Wheel] {sym}: missing 'state' key in saved state — skipping")
+                continue
+            pos.state = WheelState(raw_state)
             pos.stock_quantity = data.get("stock_quantity", 0)
             cb = data.get("stock_cost_basis")
             pos.stock_cost_basis = Decimal(cb) if cb else None
