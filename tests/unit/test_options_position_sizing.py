@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -55,7 +55,6 @@ def test_options_signal_always_sized_at_one_contract(signal_type):
     mock_sizer = MagicMock(spec=PositionSizer)
     mock_sizer.size_position.return_value = 15  # would be 15 contracts — wrong
 
-    from portfolio.portfolio import Portfolio
     portfolio = Portfolio(cash=Decimal("10000"))
 
     signal = _make_signal(signal_type)
