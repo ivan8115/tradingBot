@@ -2,7 +2,7 @@
 WatchlistProvider: builds a daily Wheel candidate watchlist from free sources.
 
 Phase 1 sources:
-  1. Finviz screener  — price range, has options, options volume filter
+  1. Finviz screener  — blacklist + price range + stock volume filter
   2. QuiverQuant      — optional boost from recent congressional purchases
 """
 from __future__ import annotations

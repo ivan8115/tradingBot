@@ -58,6 +58,7 @@ def test_scan_finviz_filters_price(mock_screener_cls, tmp_path, monkeypatch):
     monkeypatch.setattr(settings.watchlist, "min_price", 10.0)
     monkeypatch.setattr(settings.watchlist, "max_price", 50.0)
     monkeypatch.setattr(settings.watchlist, "min_options_volume", 0)
+    monkeypatch.setattr(settings.watchlist, "min_stock_volume", 0)
 
     provider = WatchlistProvider.__new__(WatchlistProvider)
     provider._cfg = settings.watchlist
